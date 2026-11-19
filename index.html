@@ -1,0 +1,2606 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>OrtoDocx Académico — Corrección Ortográfica y Normalización APA / UPEL / UDO</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: ['class', '[data-theme="dark"]'],
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Fuente Inter y fuentes académicas para simulación de hoja -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Tinos:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
+    <!-- JSZip para manipular el interior de archivos .docx preservando XML y estilos -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        :root {
+            --bg-app: #f8fafc;
+            --bg-surface: #ffffff;
+            --bg-surface-muted: #f1f5f9;
+            --bg-sheet-stage: #e2e8f0;
+            --text-primary: #0f172a;
+            --text-secondary: #475569;
+            --text-muted: #64748b;
+            --border-color: #e2e8f0;
+            --accent-primary: #4f46e5;
+            --accent-hover: #4338ca;
+            --accent-soft: #eef2ff;
+            --safe-top: env(safe-area-inset-top, 0px);
+            --safe-bottom: env(safe-area-inset-bottom, 0px);
+            --safe-left: env(safe-area-inset-left, 0px);
+            --safe-right: env(safe-area-inset-right, 0px);
+            --radius-card: 1.25rem;
+            --transition-ui: 220ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+
+        [data-theme="dark"] {
+            --bg-app: #0b1120;
+            --bg-surface: #111827;
+            --bg-surface-muted: #1e293b;
+            --bg-sheet-stage: #0f172a;
+            --text-primary: #f8fafc;
+            --text-secondary: #cbd5e1;
+            --text-muted: #94a3b8;
+            --border-color: #1e293b;
+            --accent-primary: #6366f1;
+            --accent-hover: #818cf8;
+            --accent-soft: rgba(99, 102, 241, 0.16);
+        }
+
+        * {
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-app);
+            color: var(--text-primary);
+            padding-top: var(--safe-top);
+            padding-bottom: calc(4.5rem + var(--safe-bottom));
+            transition: background-color var(--transition-ui), color var(--transition-ui);
+            overflow-x: hidden;
+        }
+
+        @media (min-width: 1024px) {
+            body {
+                padding-bottom: 0;
+            }
+        }
+
+        /* Superficies adaptativas con variables CSS */
+        .ui-surface {
+            background-color: var(--bg-surface);
+            border-color: var(--border-color);
+            transition: background-color var(--transition-ui), border-color var(--transition-ui), box-shadow var(--transition-ui);
+        }
+
+        .ui-surface-muted {
+            background-color: var(--bg-surface-muted);
+            border-color: var(--border-color);
+        }
+
+        /* Scrollbar estilizada */
+        ::-webkit-scrollbar {
+            width: 7px;
+            height: 7px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(148, 163, 184, 0.45);
+            border-radius: 9999px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(100, 116, 139, 0.7);
+        }
+
+        /* Estilos de resaltado de errores en el documento */
+        .issue-mark {
+            cursor: pointer;
+            padding: 1px 5px;
+            border-radius: 6px;
+            transition: all 0.18s ease;
+            font-weight: 600;
+            position: relative;
+            display: inline;
+        }
+        .issue-spelling {
+            background-color: #fee2e2;
+            color: #991b1b;
+            border-bottom: 2px solid #ef4444;
+        }
+        .issue-spelling:hover, .issue-spelling.active-mark {
+            background-color: #fecaca;
+            box-shadow: 0 0 0 2.5px #ef4444;
+        }
+        .issue-grammar {
+            background-color: #fef3c7;
+            color: #92400e;
+            border-bottom: 2px solid #f59e0b;
+        }
+        .issue-grammar:hover, .issue-grammar.active-mark {
+            background-color: #fde68a;
+            box-shadow: 0 0 0 2.5px #f59e0b;
+        }
+        .issue-typography {
+            background-color: #dbeafe;
+            color: #1e40af;
+            border-bottom: 2px solid #3b82f6;
+        }
+        .issue-typography:hover, .issue-typography.active-mark {
+            background-color: #bfdbfe;
+            box-shadow: 0 0 0 2.5px #3b82f6;
+        }
+        .issue-fixed {
+            background-color: #dcfce7;
+            color: #166534;
+            border-bottom: 2px solid #22c55e;
+        }
+        .issue-ignored {
+            background-color: transparent;
+            color: inherit;
+            border-bottom: 1px dashed #94a3b8;
+        }
+
+        /* Simulación de hoja académica (siempre papel claro legible con escala dinámica) */
+        .sheet-stage {
+            background-color: var(--bg-sheet-stage);
+        }
+        .academic-sheet {
+            background-color: #ffffff;
+            color: #0f172a;
+            transform-origin: top center;
+            transition: padding 0.25s ease, transform 0.2s ease, box-shadow 0.25s ease;
+            box-shadow: 0 14px 30px -8px rgba(15, 23, 42, 0.14), 0 4px 10px -4px rgba(15, 23, 42, 0.06);
+        }
+        .font-academic-times {
+            font-family: 'Tinos', 'Times New Roman', Times, serif;
+        }
+        .font-academic-arial {
+            font-family: Arial, Helvetica, sans-serif;
+        }
+        .font-academic-calibri {
+            font-family: Calibri, 'Inter', sans-serif;
+        }
+
+        /* Animación de pulso suave en zona de carga */
+        @keyframes pulse-border {
+            0%, 100% { border-color: #6366f1; transform: scale(1); }
+            50% { border-color: #a5b4fc; transform: scale(1.006); }
+        }
+        .drop-active {
+            animation: pulse-border 1.4s infinite;
+            background-color: var(--accent-soft) !important;
+        }
+
+        /* Animaciones de entrada de vistas y tarjetas */
+        @keyframes fadeSlideUp {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-view-in {
+            animation: fadeSlideUp 0.28s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+        }
+
+        /* Acordeón suave para parámetros normativos */
+        .accordion-content {
+            display: grid;
+            grid-template-rows: 1fr;
+            transition: grid-template-rows 0.26s ease;
+        }
+        .accordion-content.collapsed {
+            grid-template-rows: 0fr;
+        }
+        .accordion-inner {
+            overflow: hidden;
+        }
+
+        /* Barra inferior móvil con safe-area */
+        .mobile-bottom-nav {
+            padding-bottom: max(0.5rem, var(--safe-bottom));
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col selection:bg-indigo-500 selection:text-white">
+
+    <!-- Notificación Toast Flotante -->
+    <div id="toast-container" class="fixed bottom-20 lg:bottom-6 right-4 left-4 sm:left-auto sm:right-5 z-50 flex flex-col gap-2 max-w-sm sm:w-full pointer-events-none"></div>
+
+    <!-- Barra Superior / Header Adaptable -->
+    <header class="ui-surface border-b sticky top-0 z-30 backdrop-blur-md bg-opacity-90">
+        <div class="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2 sm:gap-4">
+            <!-- Marca y subtítulo -->
+            <div class="flex items-center gap-2.5 sm:gap-3 min-w-0">
+                <div class="w-10 h-10 rounded-2xl bg-gradient-to-br from-indigo-600 via-indigo-500 to-blue-600 flex items-center justify-center text-white shadow-md shadow-indigo-500/25 shrink-0">
+                    <i data-lucide="graduation-cap" class="w-5 h-5 sm:w-6 sm:h-6"></i>
+                </div>
+                <div class="min-w-0">
+                    <div class="flex items-center gap-2">
+                        <h1 class="text-base sm:text-xl font-extrabold tracking-tight truncate">OrtoDocx <span class="text-indigo-600 dark:text-indigo-400">Académico</span></h1>
+                        <span class="hidden md:inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200/70 dark:border-indigo-800/70">APA 7 • UPEL • UDO • UCV</span>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 truncate">Corrección ortográfica y formato académico XML</p>
+                </div>
+            </div>
+
+            <!-- Controles globales: Tema + Acciones de documento -->
+            <div class="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+                <!-- Botón Cambio Tema Claro / Oscuro -->
+                <button type="button" id="btn-theme-toggle" class="p-2.5 rounded-xl ui-surface-muted hover:opacity-80 border transition cursor-pointer" title="Cambiar entre tema claro y oscuro" aria-label="Alternar tema visual">
+                    <i data-lucide="moon" id="icon-theme-moon" class="w-4 h-4 text-slate-700 dark:text-slate-200"></i>
+                    <i data-lucide="sun" id="icon-theme-sun" class="w-4 h-4 text-amber-400 hidden"></i>
+                </button>
+
+                <!-- Acciones visibles cuando hay un documento abierto -->
+                <div id="header-actions" class="hidden items-center gap-1.5 sm:gap-2">
+                    <button type="button" id="btn-new-doc" class="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-semibold ui-surface-muted border hover:opacity-85 transition cursor-pointer" title="Cargar otro archivo .docx">
+                        <i data-lucide="folder-plus" class="w-4 h-4"></i>
+                        <span class="hidden md:inline">Nuevo</span>
+                    </button>
+                    <button type="button" id="btn-fix-all-top" class="hidden sm:inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/80 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 transition cursor-pointer">
+                        <i data-lucide="wand-2" class="w-4 h-4"></i>
+                        <span>Corregir todo</span>
+                    </button>
+                    <button type="button" id="btn-export-docx" class="inline-flex items-center justify-center gap-1.5 px-3.5 sm:px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 shadow-sm shadow-emerald-600/20 transition cursor-pointer">
+                        <i data-lucide="download" class="w-4 h-4"></i>
+                        <span>Descargar <span class="hidden sm:inline">.docx</span></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- CONTENIDO PRINCIPAL -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-5 sm:py-8">
+
+        <!-- ===================================================================== -->
+        <!-- VISTA 1: PANTALLA DE INICIO Y CARGA DE DOCUMENTOS                     -->
+        <!-- ===================================================================== -->
+        <section id="upload-view" class="max-w-3xl mx-auto animate-view-in">
+            <!-- Hero compacto y guía paso a paso -->
+            <div class="text-center mb-6 sm:mb-8">
+                <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200/70 dark:border-indigo-800 mb-3">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    100% Privado • Procesamiento local en tu dispositivo
+                </div>
+                <h2 class="text-2xl sm:text-4xl font-extrabold tracking-tight mb-2.5">
+                    Perfecciona tu tesis o informe <span class="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-blue-500">en segundos</span>
+                </h2>
+                <p class="text-sm sm:text-base text-slate-600 dark:text-slate-400 max-w-xl mx-auto">
+                    Corrige ortografía y gramática en español y aplica automáticamente márgenes, sangrías e interlineado bajo <strong>APA 7.ª Ed., UPEL, UDO, UCV, LUZ o URBE</strong>.
+                </p>
+            </div>
+
+            <!-- Zona Drag & Drop y Selector Nativo Android -->
+            <div id="drop-zone" class="relative ui-surface border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-indigo-500 rounded-3xl p-6 sm:p-11 text-center transition-all shadow-sm hover:shadow-lg group overflow-hidden">
+                <!-- Input superpuesto con opacity-0 (nunca display:none) para compatibilidad total con Android / WebViews -->
+                <input
+                    type="file"
+                    id="file-input"
+                    accept=".docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,application/zip,application/octet-stream,*/*"
+                    class="opacity-0 absolute inset-0 w-full h-full cursor-pointer z-10"
+                    aria-label="Seleccionar documento Word desde el almacenamiento del dispositivo"
+                >
+                <div class="w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-4 rounded-3xl bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 group-hover:scale-105 group-hover:bg-indigo-600 group-hover:text-white flex items-center justify-center transition-all duration-200 pointer-events-none shadow-xs">
+                    <i data-lucide="file-up" class="w-8 h-8 sm:w-9 sm:h-9"></i>
+                </div>
+                <h3 class="text-lg sm:text-xl font-bold mb-1.5 pointer-events-none">
+                    Toca aquí o arrastra tu archivo Word (.docx)
+                </h3>
+                <p class="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mb-6 pointer-events-none max-w-md mx-auto">
+                    Compatible con almacenamiento interno de Android, Google Drive, Descargas y carpetas locales
+                </p>
+
+                <!-- Botones táctiles grandes (>= 48px de alto) -->
+                <div class="relative z-20 flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3">
+                    <label for="file-input" id="btn-select-file" class="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl font-bold text-sm text-white bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] shadow-md shadow-indigo-600/20 transition cursor-pointer select-none">
+                        <i data-lucide="folder-open" class="w-4 h-4"></i>
+                        <span>Seleccionar archivo .docx</span>
+                    </label>
+                    <label for="file-input" id="btn-explore-device" class="inline-flex items-center justify-center gap-2 px-5 py-3.5 rounded-2xl font-semibold text-sm text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/80 hover:bg-indigo-100 border border-indigo-200 dark:border-indigo-800 active:scale-[0.99] transition cursor-pointer select-none">
+                        <i data-lucide="smartphone" class="w-4 h-4"></i>
+                        <span>Almacenamiento móvil</span>
+                    </label>
+                    <button type="button" id="btn-load-sample" class="inline-flex items-center justify-center gap-2 px-5 py-3.5 rounded-2xl font-semibold text-sm ui-surface-muted border hover:opacity-85 active:scale-[0.99] transition cursor-pointer">
+                        <i data-lucide="sparkles" class="w-4 h-4 text-amber-500"></i>
+                        <span>Tesis de ejemplo</span>
+                    </button>
+                </div>
+
+                <p class="relative z-20 mt-4 text-[11px] text-slate-400 dark:text-slate-500 pointer-events-none">
+                    Sugerencia Android: Si el selector muestra archivos en gris, abre el menú lateral del gestor y elige «Descargas» o «Almacenamiento interno».
+                </p>
+            </div>
+
+            <!-- Flujo Guiado en 3 Pasos -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3.5 sm:gap-4 mt-7">
+                <div class="ui-surface p-5 rounded-2xl border shadow-2xs flex sm:flex-col items-start gap-3.5">
+                    <div class="w-10 h-10 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0 font-extrabold text-sm">
+                        1
+                    </div>
+                    <div>
+                        <h4 class="font-bold text-sm mb-1 flex items-center gap-1.5">
+                            <span>Carga tu .docx</span>
+                        </h4>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                            Extraemos los párrafos, tablas y capítulos preservando el formato XML original sin subir tu archivo a servidores.
+                        </p>
+                    </div>
+                </div>
+                <div class="ui-surface p-5 rounded-2xl border shadow-2xs flex sm:flex-col items-start gap-3.5">
+                    <div class="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0 font-extrabold text-sm">
+                        2
+                    </div>
+                    <div>
+                        <h4 class="font-bold text-sm mb-1">Corrige y Normaliza</h4>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                            Revisa tildes y gramática en un toque y adapta márgenes, sangrías e interlineado a APA 7 o normas venezolanas.
+                        </p>
+                    </div>
+                </div>
+                <div class="ui-surface p-5 rounded-2xl border shadow-2xs flex sm:flex-col items-start gap-3.5">
+                    <div class="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 font-extrabold text-sm">
+                        3
+                    </div>
+                    <div>
+                        <h4 class="font-bold text-sm mb-1">Descarga listo</h4>
+                        <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                            Obtén un nuevo archivo <code>_corregido.docx</code> compatible con Word, Google Docs y WPS Office.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ===================================================================== -->
+        <!-- VISTA DE CARGA CON BARRA DE PROGRESO EN TIEMPO REAL                   -->
+        <!-- ===================================================================== -->
+        <section id="loading-view" class="hidden max-w-md mx-auto my-14 sm:my-20 text-center ui-surface p-7 sm:p-9 rounded-3xl border shadow-md animate-view-in">
+            <div class="w-16 h-16 mx-auto mb-5 rounded-2xl bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+                <i data-lucide="loader-2" class="w-8 h-8 animate-spin"></i>
+            </div>
+            <h3 id="loading-title" class="text-lg font-bold mb-1.5">Analizando documento...</h3>
+            <p id="loading-subtitle" class="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mb-5">Extrayendo estructura XML, detectando capítulos y revisando ortografía.</p>
+            
+            <!-- Barra de progreso real -->
+            <div class="w-full h-2.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden mb-2">
+                <div id="loading-progress-bar" class="h-full bg-gradient-to-r from-indigo-600 to-blue-500 rounded-full transition-all duration-300" style="width: 20%"></div>
+            </div>
+            <span id="loading-progress-text" class="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">20% completado</span>
+        </section>
+
+        <!-- ===================================================================== -->
+        <!-- VISTA 2: ESPACIO DE TRABAJO ADAPTABLE (MOBILE-FIRST + SPLIT DESKTOP)  -->
+        <!-- ===================================================================== -->
+        <section id="editor-view" class="hidden flex-col gap-4 sm:gap-5 animate-view-in">
+
+            <!-- Banner de descarga directa de respaldo (móviles / WebViews Android) -->
+            <div id="direct-download-banner" class="hidden bg-emerald-50 dark:bg-emerald-950/70 border border-emerald-300 dark:border-emerald-800 rounded-2xl p-3.5 sm:px-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0">
+                        <i data-lucide="file-check-2" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <p class="text-xs sm:text-sm font-bold text-emerald-950 dark:text-emerald-100">Documento generado correctamente</p>
+                        <p class="text-xs text-emerald-800 dark:text-emerald-300">Si tu navegador móvil no inició la descarga, toca el botón directo:</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 w-full sm:w-auto justify-end">
+                    <a id="direct-download-link" href="#" download="documento_corregido.docx" class="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition">
+                        <i data-lucide="download" class="w-4 h-4"></i>
+                        <span id="direct-download-filename">Guardar .docx</span>
+                    </a>
+                    <button type="button" id="btn-close-download-banner" class="p-2.5 rounded-xl text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 cursor-pointer" title="Cerrar aviso">
+                        <i data-lucide="x" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Tarjeta Resumen del Documento y Métricas Rápidas -->
+            <div class="ui-surface rounded-2xl border p-3.5 sm:p-4 shadow-2xs flex flex-col lg:flex-row lg:items-center justify-between gap-3.5">
+                <div class="flex items-center gap-3 min-w-0">
+                    <div class="w-11 h-11 rounded-2xl bg-blue-50 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+                        <i data-lucide="file-text" class="w-5 h-5"></i>
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div class="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                            <h2 id="doc-filename" class="font-bold truncate text-sm sm:text-base max-w-[200px] sm:max-w-xs">documento.docx</h2>
+                            <span id="engine-badge" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 shrink-0">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Motor Híbrido
+                            </span>
+                            <span id="active-norm-badge" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ui-surface-muted border shrink-0">
+                                Formato Original
+                            </span>
+                        </div>
+                        <p class="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                            Toca cualquier palabra subrayada para corregirla o configura la norma académica
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Grid de Métricas Responsivo -->
+                <div class="grid grid-cols-4 gap-2 shrink-0">
+                    <div class="ui-surface-muted px-2.5 sm:px-3.5 py-2 rounded-xl border text-center sm:text-left">
+                        <span class="block text-[10px] sm:text-[11px] text-slate-500 dark:text-slate-400 font-medium">Palabras</span>
+                        <span id="stat-words" class="text-sm sm:text-lg font-extrabold">0</span>
+                    </div>
+                    <div class="bg-rose-50/80 dark:bg-rose-950/40 px-2.5 sm:px-3.5 py-2 rounded-xl border border-rose-200/70 dark:border-rose-900/60 text-center sm:text-left">
+                        <span class="block text-[10px] sm:text-[11px] text-rose-600 dark:text-rose-400 font-medium">Pendientes</span>
+                        <span id="stat-pending" class="text-sm sm:text-lg font-extrabold text-rose-700 dark:text-rose-300">0</span>
+                    </div>
+                    <div class="bg-emerald-50/80 dark:bg-emerald-950/40 px-2.5 sm:px-3.5 py-2 rounded-xl border border-emerald-200/70 dark:border-emerald-900/60 text-center sm:text-left">
+                        <span class="block text-[10px] sm:text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">Corregidos</span>
+                        <span id="stat-fixed" class="text-sm sm:text-lg font-extrabold text-emerald-700 dark:text-emerald-300">0</span>
+                    </div>
+                    <div class="bg-indigo-50/80 dark:bg-indigo-950/40 px-2.5 sm:px-3.5 py-2 rounded-xl border border-indigo-200/70 dark:border-indigo-900/60 text-center sm:text-left">
+                        <span class="block text-[10px] sm:text-[11px] text-indigo-600 dark:text-indigo-400 font-medium">Norma</span>
+                        <span id="stat-norm-short" class="text-xs sm:text-sm font-extrabold text-indigo-700 dark:text-indigo-300 truncate block mt-0.5">Original</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Leyenda interactiva y Reanálisis -->
+            <div class="ui-surface px-3.5 sm:px-4 py-2.5 rounded-2xl border text-xs flex flex-wrap items-center justify-between gap-2.5">
+                <div class="flex flex-wrap items-center gap-2.5 sm:gap-4">
+                    <span class="font-semibold text-slate-500 dark:text-slate-400 hidden sm:inline">Leyenda:</span>
+                    <span class="inline-flex items-center gap-1.5">
+                        <span class="w-3 h-3 rounded-sm bg-red-200 border-b-2 border-red-500 inline-block"></span> Ortografía
+                    </span>
+                    <span class="inline-flex items-center gap-1.5">
+                        <span class="w-3 h-3 rounded-sm bg-amber-200 border-b-2 border-amber-500 inline-block"></span> Gramática
+                    </span>
+                    <span class="inline-flex items-center gap-1.5">
+                        <span class="w-3 h-3 rounded-sm bg-blue-200 border-b-2 border-blue-500 inline-block"></span> Tipografía
+                    </span>
+                    <span class="inline-flex items-center gap-1.5">
+                        <span class="px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 border border-purple-300 text-[10px] font-bold">Cita &gt;40</span> Bloque
+                    </span>
+                </div>
+                <div class="flex items-center gap-2 ml-auto">
+                    <button id="btn-reanalyze" type="button" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/70 hover:bg-indigo-100 transition cursor-pointer">
+                        <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                        <span>Reanalizar</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- ================================================================= -->
+            <!-- SPLIT VIEW EN ESCRITORIO / VISTAS CONMUTABLES EN MÓVIL            -->
+            <!-- ================================================================= -->
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+
+                <!-- COLUMNA IZQUIERDA (7 cols en lg): Vista Previa de Hoja Académica -->
+                <div id="mobile-section-document" class="lg:col-span-7 ui-surface rounded-2xl border shadow-2xs flex flex-col overflow-hidden">
+                    <!-- Barra superior de la hoja con controles de Zoom -->
+                    <div class="px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                        <div class="flex items-center gap-2 min-w-0">
+                            <i data-lucide="file-text" class="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0"></i>
+                            <h3 class="font-bold text-xs sm:text-sm truncate">Vista previa de página</h3>
+                            <span id="sheet-ruler-info" class="text-[11px] text-slate-500 dark:text-slate-400 ui-surface-muted px-2 py-0.5 rounded-md hidden md:inline truncate">
+                                Márgenes originales
+                            </span>
+                        </div>
+
+                        <!-- Controles de Zoom Táctil de la Hoja -->
+                        <div class="flex items-center gap-1 ui-surface-muted p-1 rounded-xl border">
+                            <button type="button" id="btn-zoom-out" class="p-1.5 rounded-lg hover:bg-white dark:hover:bg-slate-700 transition cursor-pointer" title="Reducir zoom de lectura" aria-label="Reducir zoom">
+                                <i data-lucide="zoom-out" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <span id="zoom-level-label" class="text-[11px] font-bold px-1.5 min-w-[3rem] text-center select-none">100%</span>
+                            <button type="button" id="btn-zoom-in" class="p-1.5 rounded-lg hover:bg-white dark:hover:bg-slate-700 transition cursor-pointer" title="Aumentar zoom de lectura" aria-label="Aumentar zoom">
+                                <i data-lucide="zoom-in" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <button type="button" id="btn-zoom-reset" class="p-1.5 rounded-lg hover:bg-white dark:hover:bg-slate-700 transition cursor-pointer text-slate-500" title="Restablecer zoom 100%" aria-label="Restablecer zoom">
+                                <i data-lucide="rotate-ccw" class="w-3 h-3"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Escenario de Hoja Simulada -->
+                    <div class="sheet-stage p-2.5 sm:p-6 max-h-[68vh] lg:max-h-[73vh] overflow-y-auto overflow-x-hidden">
+                        <div id="academic-sheet-wrapper" class="academic-sheet mx-auto rounded-xl border border-slate-200 relative" style="padding: 1.75rem;">
+                            <!-- Indicador visual de número de página (APA 7 / Académico) -->
+                            <div id="sheet-page-number" class="hidden text-right text-xs text-slate-400 mb-4 select-none">
+                                1
+                            </div>
+                            <!-- Contenedor de párrafos del documento -->
+                            <div id="document-preview-container" class="space-y-3 text-[15px] leading-relaxed">
+                                <!-- Renderizado dinámico de párrafos -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- COLUMNA DERECHA (5 cols en lg): Herramientas (Ortografía & Normas) -->
+                <div id="mobile-section-tools" class="hidden lg:flex lg:col-span-5 ui-surface rounded-2xl border shadow-2xs flex-col overflow-hidden lg:sticky lg:top-20">
+                    
+                    <!-- Pestañas internas (Visibles en escritorio y sincronizadas con barra móvil) -->
+                    <div class="grid grid-cols-2 border-b border-slate-200 dark:border-slate-800 ui-surface-muted p-1.5 gap-1.5">
+                        <button type="button" id="tab-btn-spelling" class="flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold transition cursor-pointer bg-white dark:bg-slate-800 text-indigo-700 dark:text-indigo-300 shadow-2xs border border-slate-200/80 dark:border-slate-700">
+                            <i data-lucide="spell-check-2" class="w-4 h-4"></i>
+                            <span>Ortografía (<span id="tab-spelling-count">0</span>)</span>
+                        </button>
+                        <button type="button" id="tab-btn-norms" class="flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-semibold transition cursor-pointer text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white">
+                            <i data-lucide="graduation-cap" class="w-4 h-4"></i>
+                            <span>Normas APA / VE</span>
+                        </button>
+                    </div>
+
+                    <!-- =============================================================== -->
+                    <!-- SUB-PANEL A: CORRECCIÓN ORTOGRÁFICA Y GRAMATICAL                -->
+                    <!-- =============================================================== -->
+                    <div id="panel-spelling" class="flex flex-col">
+                        <div class="px-4 py-3 border-b border-slate-200/70 dark:border-slate-800 flex items-center justify-between gap-2">
+                            <span class="text-xs font-semibold text-slate-500 dark:text-slate-400">Filtrar:</span>
+                            <select id="filter-category" class="text-xs ui-surface-muted border rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                <option value="all">Todas las sugerencias</option>
+                                <option value="pending">Pendientes</option>
+                                <option value="spelling">Ortografía / Tildes</option>
+                                <option value="grammar">Gramática / Estilo</option>
+                                <option value="typography">Tipografía / Espacios</option>
+                                <option value="fixed">Corregidas</option>
+                            </select>
+                        </div>
+
+                        <!-- Barra de acción rápida -->
+                        <div id="bulk-action-bar" class="px-4 py-2.5 bg-indigo-50/80 dark:bg-indigo-950/50 border-b border-indigo-100 dark:border-indigo-900/60 flex items-center justify-between gap-2">
+                            <span class="text-xs text-indigo-900 dark:text-indigo-200 font-medium">Corrección automática segura</span>
+                            <button id="btn-fix-all-panel" type="button" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 shadow-2xs transition cursor-pointer">
+                                <i data-lucide="check-check" class="w-3.5 h-3.5"></i>
+                                <span>Corregir todo</span>
+                            </button>
+                        </div>
+
+                        <!-- Lista de tarjetas de sugerencias -->
+                        <div id="suggestions-list" class="p-3.5 sm:p-4 space-y-3 max-h-[58vh] overflow-y-auto">
+                            <!-- Renderizado dinámico de sugerencias -->
+                        </div>
+                    </div>
+
+                    <!-- =============================================================== -->
+                    <!-- SUB-PANEL B: NORMALIZACIÓN ACADÉMICA E INSTITUCIONAL            -->
+                    <!-- =============================================================== -->
+                    <div id="panel-norms" class="hidden flex-col max-h-[70vh] overflow-y-auto">
+                        <div class="p-4 space-y-4">
+                            
+                            <!-- Paso 1: Selector visual de Perfil Normativo -->
+                            <div>
+                                <label for="norm-preset-select" class="block text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 mb-1.5">
+                                    1. Perfil Normativo e Institucional
+                                </label>
+                                <select id="norm-preset-select" class="w-full text-sm font-semibold ui-surface border border-slate-300 dark:border-slate-700 rounded-xl px-3.5 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs">
+                                    <option value="none">Mantener formato original del documento</option>
+                                    <option value="apa7">Normas APA 7.ª Edición (Internacional)</option>
+                                    <option value="upel">Manual UPEL (Venezuela)</option>
+                                    <option value="udo">Normas UDO (Universidad de Oriente - VE)</option>
+                                    <option value="ucv">Normas UCV / LUZ (Trabajos de Grado - VE)</option>
+                                    <option value="urbe">Manual URBE (Maracaibo - VE)</option>
+                                    <option value="custom">Modo Personalizado (Ajuste Manual)</option>
+                                </select>
+
+                                <!-- Tarjeta de descripción clara de la norma seleccionada -->
+                                <div class="mt-2.5 p-3 rounded-xl ui-surface-muted border text-xs text-slate-600 dark:text-slate-300 leading-relaxed flex items-start gap-2.5">
+                                    <i data-lucide="info" class="w-4 h-4 text-indigo-500 shrink-0 mt-0.5"></i>
+                                    <p id="norm-description">
+                                        Conserva los estilos, fuentes y márgenes originales del archivo cargado.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <!-- Paso 2: Acordeón de Parámetros XML -->
+                            <div id="norm-parameters-box" class="ui-surface-muted rounded-2xl border overflow-hidden">
+                                <button type="button" id="btn-toggle-norm-accordion" class="w-full px-4 py-3 flex items-center justify-between text-left cursor-pointer hover:opacity-90">
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-xs font-bold">2. Ajustes Detallados (XML)</span>
+                                        <span id="custom-mode-tag" class="hidden text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-indigo-600 text-white">Personalizado</span>
+                                    </div>
+                                    <i data-lucide="chevron-down" id="icon-norm-accordion" class="w-4 h-4 text-slate-500 transition-transform duration-200"></i>
+                                </button>
+
+                                <div id="norm-accordion-body" class="accordion-content">
+                                    <div class="accordion-inner">
+                                        <div class="px-4 pb-4 pt-1 space-y-3 border-t border-slate-200/70 dark:border-slate-700/70">
+                                            <!-- Tipografía y Tamaño -->
+                                            <div class="grid grid-cols-2 gap-2.5">
+                                                <div>
+                                                    <label class="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">Tipografía</label>
+                                                    <select id="param-font" class="w-full text-xs ui-surface border rounded-xl px-2.5 py-2">
+                                                        <option value="Times New Roman">Times New Roman</option>
+                                                        <option value="Arial">Arial</option>
+                                                        <option value="Calibri">Calibri</option>
+                                                    </select>
+                                                </div>
+                                                <div>
+                                                    <label class="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">Tamaño (pt)</label>
+                                                    <select id="param-size" class="w-full text-xs ui-surface border rounded-xl px-2.5 py-2">
+                                                        <option value="12">12 pt</option>
+                                                        <option value="11">11 pt</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+
+                                            <!-- Interlineado y Alineación -->
+                                            <div class="grid grid-cols-2 gap-2.5">
+                                                <div>
+                                                    <label class="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">Interlineado</label>
+                                                    <select id="param-line-spacing" class="w-full text-xs ui-surface border rounded-xl px-2.5 py-2">
+                                                        <option value="1.0">Sencillo (1.0)</option>
+                                                        <option value="1.15">Múltiple (1.15)</option>
+                                                        <option value="1.5">1.5 líneas (UPEL/VE)</option>
+                                                        <option value="2.0">Doble (2.0 - APA 7)</option>
+                                                    </select>
+                                                </div>
+                                                <div>
+                                                    <label class="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">Alineación Cuerpo</label>
+                                                    <select id="param-align" class="w-full text-xs ui-surface border rounded-xl px-2.5 py-2">
+                                                        <option value="both">Justificado</option>
+                                                        <option value="left">Izquierda (APA 7)</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+
+                                            <!-- Sangría y Citas en bloque -->
+                                            <div class="grid grid-cols-2 gap-2.5 items-center">
+                                                <div>
+                                                    <label class="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1">Sangría 1.ª línea (cm)</label>
+                                                    <input type="number" id="param-indent" step="0.01" min="0" max="3" value="1.25" class="w-full text-xs ui-surface border rounded-xl px-2.5 py-2">
+                                                </div>
+                                                <div class="pt-4">
+                                                    <label class="inline-flex items-center gap-2 text-xs cursor-pointer select-none">
+                                                        <input type="checkbox" id="param-block-quotes" checked class="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
+                                                        <span>Citas &gt;40 pal. en bloque</span>
+                                                    </label>
+                                                </div>
+                                            </div>
+
+                                            <!-- Márgenes en cm -->
+                                            <div>
+                                                <label class="block text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1.5">Márgenes de página (cm)</label>
+                                                <div class="grid grid-cols-4 gap-2">
+                                                    <div>
+                                                        <span class="block text-[10px] text-slate-400 text-center mb-0.5">Sup.</span>
+                                                        <input type="number" id="param-margin-top" step="0.01" min="1" max="6" value="3.00" class="w-full text-xs text-center ui-surface border rounded-xl py-1.5">
+                                                    </div>
+                                                    <div>
+                                                        <span class="block text-[10px] text-slate-400 text-center mb-0.5">Inf.</span>
+                                                        <input type="number" id="param-margin-bottom" step="0.01" min="1" max="6" value="3.00" class="w-full text-xs text-center ui-surface border rounded-xl py-1.5">
+                                                    </div>
+                                                    <div>
+                                                        <span class="block text-[10px] text-indigo-600 dark:text-indigo-400 font-bold text-center mb-0.5">Izq.</span>
+                                                        <input type="number" id="param-margin-left" step="0.01" min="1" max="6" value="4.00" class="w-full text-xs text-center ui-surface border-2 border-indigo-400/60 rounded-xl py-1.5 font-bold">
+                                                    </div>
+                                                    <div>
+                                                        <span class="block text-[10px] text-slate-400 text-center mb-0.5">Der.</span>
+                                                        <input type="number" id="param-margin-right" step="0.01" min="1" max="6" value="3.00" class="w-full text-xs text-center ui-surface border rounded-xl py-1.5">
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Botón Principal de Aplicación de Norma al XML -->
+                            <button type="button" id="btn-apply-norm" class="w-full py-3.5 px-4 rounded-2xl text-sm font-bold text-white bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 active:scale-[0.99] shadow-md shadow-indigo-600/20 flex items-center justify-center gap-2 transition cursor-pointer">
+                                <i data-lucide="sparkles" class="w-4 h-4"></i>
+                                <span>Aplicar Norma al Documento (.docx)</span>
+                            </button>
+
+                            <!-- Panel de Diagnóstico de Cumplimiento Normativo -->
+                            <div id="norm-diagnostic-panel" class="bg-emerald-50/70 dark:bg-emerald-950/35 border border-emerald-200 dark:border-emerald-900/70 rounded-2xl p-3.5 space-y-2.5">
+                                <div class="flex items-center justify-between">
+                                    <h4 class="text-xs font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5">
+                                        <i data-lucide="clipboard-check" class="w-4 h-4 text-emerald-600 dark:text-emerald-400"></i>
+                                        Diagnóstico de Estructura
+                                    </h4>
+                                    <span id="diagnostic-status-pill" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                                        Sin aplicar
+                                    </span>
+                                </div>
+                                <ul id="diagnostic-checklist" class="space-y-1.5 text-xs text-slate-700 dark:text-slate-300">
+                                    <!-- Renderizado dinámico del diagnóstico -->
+                                </ul>
+                            </div>
+
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+        </section>
+
+    </main>
+
+    <!-- ========================================================================= -->
+    <!-- BARRA DE NAVEGACIÓN INFERIOR TÁCTIL (SOLO MÓVILES / TABLETS < 1024px)     -->
+    <!-- ========================================================================= -->
+    <nav id="mobile-bottom-nav" class="hidden lg:hidden fixed bottom-0 inset-x-0 z-40 ui-surface bg-opacity-95 border-t mobile-bottom-nav shadow-lg">
+        <div class="grid grid-cols-3 gap-1 px-2 pt-1.5 max-w-lg mx-auto">
+            <button type="button" id="mnav-btn-doc" class="flex flex-col items-center justify-center py-1.5 px-2 rounded-xl text-indigo-600 dark:text-indigo-400 bg-indigo-50/80 dark:bg-indigo-950/70 font-bold text-[11px] gap-1 transition cursor-pointer">
+                <i data-lucide="file-text" class="w-5 h-5"></i>
+                <span>Documento</span>
+            </button>
+            <button type="button" id="mnav-btn-spelling" class="relative flex flex-col items-center justify-center py-1.5 px-2 rounded-xl text-slate-600 dark:text-slate-400 font-semibold text-[11px] gap-1 transition cursor-pointer">
+                <i data-lucide="spell-check-2" class="w-5 h-5"></i>
+                <span>Ortografía</span>
+                <span id="mnav-spelling-badge" class="absolute top-1 right-5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[10px] font-extrabold flex items-center justify-center">0</span>
+            </button>
+            <button type="button" id="mnav-btn-norms" class="flex flex-col items-center justify-center py-1.5 px-2 rounded-xl text-slate-600 dark:text-slate-400 font-semibold text-[11px] gap-1 transition cursor-pointer">
+                <i data-lucide="graduation-cap" class="w-5 h-5"></i>
+                <span>Normas APA/VE</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Footer discreto -->
+    <footer class="mt-auto py-4 border-t ui-surface text-center text-xs text-slate-500 dark:text-slate-400 px-4">
+        OrtoDocx Académico — Edición directa sobre <code>word/document.xml</code> y <code>word/styles.xml</code>. Tus documentos permanecen 100% privados en tu dispositivo.
+    </footer>
+
+    <script>
+    /**
+     * ============================================================================
+     * ORTODOCX ACADÉMICO - CORRECCIÓN ORTOGRÁFICA + MOTOR DE NORMAS APA/UPEL/VE
+     * ============================================================================
+     */
+
+    lucide.createIcons();
+
+    // ----------------------------------------------------------------------------
+    // 1. PERFILES NORMATIVOS ACADÉMICOS E INSTITUCIONALES (APA 7 + VENEZUELA)
+    // ----------------------------------------------------------------------------
+    const ACADEMIC_NORMS = {
+        none: {
+            id: "none",
+            shortName: "Original",
+            name: "Formato Original",
+            description: "Conserva los estilos, fuentes, interlineado y márgenes originales del archivo cargado.",
+            font: "Times New Roman",
+            size: 12,
+            lineSpacing: 1.15,
+            align: "both",
+            indentCm: 0,
+            marginTop: 2.54,
+            marginBottom: 2.54,
+            marginLeft: 2.54,
+            marginRight: 2.54,
+            headingStyle: "original",
+            pageNumberTopRight: false,
+            blockQuotes: false
+        },
+        apa7: {
+            id: "apa7",
+            shortName: "APA 7.ª Ed.",
+            name: "Normas APA 7.ª Edición",
+            description: "Márgenes de 2.54 cm (1 pulg.), interlineado doble (2.0), sangría de 1.27 cm (0.5 pulg.), texto alineado a la izquierda sin justificar, encabezados jerárquicos (Nivel 1 centrado negrita, Nivel 2 izquierda negrita, Nivel 3 izquierda negrita cursiva) y numeración superior derecha.",
+            font: "Times New Roman",
+            size: 12,
+            lineSpacing: 2.0,
+            align: "left",
+            indentCm: 1.27,
+            marginTop: 2.54,
+            marginBottom: 2.54,
+            marginLeft: 2.54,
+            marginRight: 2.54,
+            headingStyle: "apa7",
+            pageNumberTopRight: true,
+            blockQuotes: true
+        },
+        upel: {
+            id: "upel",
+            shortName: "Manual UPEL",
+            name: "Manual UPEL (Venezuela)",
+            description: "Márgenes 4 cm izquierdo y 3 cm superior, inferior y derecho; fuente Times New Roman o Arial 12 pt; interlineado 1.5; texto justificado; sangría de 5 espacios (1.25 cm); capítulos centrados en MAYÚSCULAS SOSTENIDAS y negrita; citas >40 palabras en bloque a interlineado sencillo.",
+            font: "Times New Roman",
+            size: 12,
+            lineSpacing: 1.5,
+            align: "both",
+            indentCm: 1.25,
+            marginTop: 3.00,
+            marginBottom: 3.00,
+            marginLeft: 4.00,
+            marginRight: 3.00,
+            headingStyle: "upel",
+            pageNumberTopRight: false,
+            blockQuotes: true
+        },
+        udo: {
+            id: "udo",
+            shortName: "Normas UDO",
+            name: "Normas UDO (Universidad de Oriente)",
+            description: "Estándar para Trabajos de Grado de la Universidad de Oriente: márgenes 4 cm izquierdo y 3 cm en los demás lados, Arial o Times New Roman 12 pt, interlineado 1.5, párrafos justificados con sangría de 1.25 cm y capítulos centrados en mayúsculas y negrita.",
+            font: "Arial",
+            size: 12,
+            lineSpacing: 1.5,
+            align: "both",
+            indentCm: 1.25,
+            marginTop: 3.00,
+            marginBottom: 3.00,
+            marginLeft: 4.00,
+            marginRight: 3.00,
+            headingStyle: "upel",
+            pageNumberTopRight: false,
+            blockQuotes: true
+        },
+        ucv: {
+            id: "ucv",
+            shortName: "Normas UCV/LUZ",
+            name: "Normas UCV / LUZ (Venezuela)",
+            description: "Configuración institucional para tesis de pregrado y postgrado UCV / LUZ: márgenes 4 cm izquierdo y 3 cm superior/inferior/derecho, Times New Roman 12 pt, interlineado 1.5, alineación justificada, sangría de 1.25 cm y citas textuales largas en bloque.",
+            font: "Times New Roman",
+            size: 12,
+            lineSpacing: 1.5,
+            align: "both",
+            indentCm: 1.25,
+            marginTop: 3.00,
+            marginBottom: 3.00,
+            marginLeft: 4.00,
+            marginRight: 3.00,
+            headingStyle: "upel",
+            pageNumberTopRight: false,
+            blockQuotes: true
+        },
+        urbe: {
+            id: "urbe",
+            shortName: "Manual URBE",
+            name: "Manual URBE (Maracaibo - VE)",
+            description: "Normativa metodológica URBE: fuente Arial 12 pt, interlineado 1.5, texto justificado, sangría de 1.25 cm, márgenes 4 cm izquierdo y 3 cm superior, inferior y derecho, con capítulos metodológicos I al V centrados en negrita.",
+            font: "Arial",
+            size: 12,
+            lineSpacing: 1.5,
+            align: "both",
+            indentCm: 1.25,
+            marginTop: 3.00,
+            marginBottom: 3.00,
+            marginLeft: 4.00,
+            marginRight: 3.00,
+            headingStyle: "upel",
+            pageNumberTopRight: false,
+            blockQuotes: true
+        },
+        custom: {
+            id: "custom",
+            shortName: "Personalizado",
+            name: "Modo Personalizado",
+            description: "Ajusta libremente tipografía, tamaño, interlineado, sangría, alineación y márgenes en centímetros para adaptarlos a cualquier facultad o revista.",
+            font: "Times New Roman",
+            size: 12,
+            lineSpacing: 1.5,
+            align: "both",
+            indentCm: 1.25,
+            marginTop: 3.00,
+            marginBottom: 3.00,
+            marginLeft: 4.00,
+            marginRight: 3.00,
+            headingStyle: "upel",
+            pageNumberTopRight: false,
+            blockQuotes: true
+        }
+    };
+
+    // ----------------------------------------------------------------------------
+    // 2. DICCIONARIO EXTENSO Y REGLAS EN ESPAÑOL (MOTOR OFFLINE / RESPALDO Y REFUERZO)
+    // ----------------------------------------------------------------------------
+    const SPANISH_DICTIONARY = {
+        "habia": "había", "tambien": "también", "atencion": "atención", "informacion": "información",
+        "arbol": "árbol", "arboles": "árboles", "facil": "fácil", "faciles": "fáciles",
+        "dificil": "difícil", "dificiles": "difíciles", "lapiz": "lápiz", "lapices": "lápices",
+        "examenes": "exámenes", "paginas": "páginas", "pagina": "página", "codigo": "código",
+        "codigos": "códigos", "numero": "número", "numeros": "números", "telefono": "teléfono",
+        "telefonos": "teléfonos", "musica": "música", "publico": "público", "rapido": "rápido",
+        "rapida": "rápida", "rapidos": "rápidos", "rapidas": "rápidas", "ultimo": "último",
+        "ultima": "última", "ultimos": "últimos", "ultimas": "últimas", "unico": "único",
+        "unica": "única", "unicos": "únicos", "unicas": "únicas", "analisis": "análisis",
+        "practica": "práctica", "practico": "práctico", "tecnica": "técnica", "tecnico": "técnico",
+        "economico": "económico", "economica": "económica", "politico": "político", "politica": "política",
+        "logica": "lógica", "logico": "lógico", "basico": "básico", "basica": "básica",
+        "especifico": "específico", "especifica": "específica", "articulo": "artículo",
+        "articulos": "artículos", "capitulo": "capítulo", "capitulos": "capítulos",
+        "titulo": "título", "titulos": "títulos", "indice": "índice", "indices": "índices",
+        "metodo": "método", "metodos": "métodos", "proposito": "propósito", "propositos": "propósitos",
+        "exito": "éxito", "exitos": "éxitos", "area": "área", "areas": "áreas",
+        "epoca": "época", "epocas": "épocas", "linea": "línea", "lineas": "líneas",
+        "haver": "haber", "iva": "iba", "vallan": "vayan",
+        "atraves": "a través", "osea": "o sea", "enserio": "en serio", "talvez": "tal vez",
+        "aveces": "a veces", "sinembargo": "sin embargo", "porfavor": "por favor",
+        "apartir": "a partir", "derrepente": "de repente", "sobretodo": "sobre todo",
+        "asi": "así", "aqui": "aquí", "alli": "allí", "despues": "después",
+        "ademas": "además", "quizas": "quizás", "detras": "detrás", "traves": "través",
+        "segun": "según", "comun": "común", "algun": "algún", "ningun": "ningún",
+        "corazon": "corazón", "razon": "razón", "accion": "acción", "solucion": "solución",
+        "educacion": "educación", "comunicacion": "comunicación", "administracion": "administración",
+        "organizacion": "organización", "situacion": "situación", "relacion": "relación",
+        "funcion": "función", "version": "versión", "decision": "decisión",
+        "revision": "revisión", "gestion": "gestión", "reunion": "reunión",
+        "opinion": "opinión", "region": "región", "nacion": "nación",
+        "cancion": "canción", "leccion": "lección", "seccion": "sección",
+        "direccion": "dirección", "produccion": "producción", "construccion": "construcción",
+        "investigacion": "investigación", "evaluacion": "evaluación", "aplicacion": "aplicación",
+        "presentacion": "presentación", "operacion": "operación", "condicion": "condición",
+        "posicion": "posición", "transicion": "transición", "creacion": "creación",
+        "expresion": "expresión", "impresion": "impresión", "discusion": "discusión",
+        "conclusion": "conclusión", "television": "televisión", "vision": "visión",
+        "mision": "misión", "comision": "comisión", "ocasion": "ocasión",
+        "tenia": "tenía", "podia": "podía", "debia": "debía", "sabia": "sabía",
+        "queria": "quería", "venia": "venía", "salia": "salía", "vivia": "vivía",
+        "decia": "decía", "hacia": "hacía", "seria": "sería", "estaria": "estaría",
+        "tendria": "tendría", "podria": "podría", "deberia": "debería", "gustaria": "gustaría",
+        "dia": "día", "dias": "días", "pais": "país", "paises": "países",
+        "raiz": "raíz", "maiz": "maíz", "baul": "baúl", "ataud": "ataúd",
+        "oido": "oído", "leido": "leído", "caido": "caído", "traido": "traído",
+        "reir": "reír", "sonreir": "sonreír", "freir": "freír", "oir": "oír",
+        "buhos": "búhos", "buho": "búho", "vehiculo": "vehículo", "vehiculos": "vehículos",
+        "huerfano": "huérfano", "huesped": "huésped",
+        "caracteristicas": "características", "caracteristica": "característica",
+        "estadisticas": "estadísticas", "estadistica": "estadística",
+        "matematica": "matemática", "matematicas": "matemáticas",
+        "fisica": "física", "quimica": "química", "biologia": "biología",
+        "geografia": "geografía", "filosofia": "filosofía", "psicologia": "psicología",
+        "sociologia": "sociología", "tecnologia": "tecnología", "metodologia": "metodología",
+        "ideologia": "ideología", "categoria": "categoría", "energia": "energía",
+        "analogia": "analogía", "galeria": "galería", "garantia": "garantía",
+        "compañia": "compañía", "economia": "economía", "autonomia": "autonomía",
+        "anatomia": "anatomía", "astronomia": "astronomía", "gastronomia": "gastronomía",
+        "ingenieria": "ingeniería", "enfermeria": "enfermería", "carpinteria": "carpintería",
+        "panaderia": "panadería", "ferreteria": "ferretería", "libreria": "librería",
+        "papeleria": "papelería", "peluqueria": "peluquería", "zapateria": "zapatería",
+        "carniceria": "carnicería", "pescaderia": "pescadería", "fruteria": "frutería",
+        "heladeria": "heladería", "pasteleria": "pastelería", "joyeria": "joyería",
+        "relojeria": "relojería", "cerrajeria": "cerrajería", "tintoreria": "tintorería",
+        "lavanderia": "lavandería", "conserjeria": "conserjería", "mensajeria": "mensajería",
+        "paqueteria": "paquetería", "jugueteria": "juguetería", "floristeria": "floristería",
+        "sastreria": "sastrería", "tapiceria": "tapicería", "cristaleria": "cristalería",
+        "albanileria": "albañilería", "fontaneria": "fontanería",
+        "mecanica": "mecánica", "electronica": "electrónica", "informatica": "informática",
+        "robotica": "robótica", "cibernetica": "cibernética", "genetica": "genética",
+        "etica": "ética", "estetica": "estética", "poetica": "poética",
+        "retorica": "retórica", "gramatica": "gramática", "ortografia": "ortografía",
+        "caligrafia": "caligrafía", "tipografia": "tipografía", "fotografia": "fotografía",
+        "cinematografia": "cinematografía", "coreografia": "coreografía",
+        "biografia": "biografía", "autobiografia": "autobiografía", "bibliografia": "bibliografía",
+        "monografia": "monografía", "radiografia": "radiografía", "ecografia": "ecografía",
+        "tomografia": "tomografía", "mamografia": "mamografía", "angiografia": "angiografía",
+        "topografia": "topografía", "hidrografia": "hidrografía", "orografia": "orografía",
+        "demografia": "demografía", "etnografia": "etnografía", "cartografia": "cartografía",
+        "oceanografia": "oceanografía", "sismografia": "sismografía", "taquigrafia": "taquigrafía",
+        "mecanografia": "mecanografía", "estenografia": "estenografía", "criptografia": "criptografía",
+        "esteganografia": "esteganografía", "holografia": "holografía", "serigrafia": "serigrafía",
+        "litografia": "litografía", "xilografia": "xilografía", "escenografia": "escenografía",
+        "discografia": "discografía", "filmografia": "filmografía", "infografia": "infografía",
+        "ahy": "ahí", "poblacion": "población", "muestra": "muestra", "tecnicas": "técnicas",
+        "recoleccion": "recolección", "formulacion": "formulación", "delimitacion": "delimitación",
+        "justificacion": "justificación", "teorico": "teórico", "teorica": "teórica",
+        "metodologico": "metodológico", "metodologica": "metodológica", "academico": "académico",
+        "academica": "académica", "cientifico": "científico", "cientifica": "científica",
+        "bibliograficas": "bibliográficas", "electronicas": "electrónicas", "hipotesis": "hipótesis",
+        "sintesis": "síntesis", "enfasis": "énfasis", "diagnostico": "diagnóstico",
+        "pronostico": "pronóstico", "validez": "validez", "confiabilidad": "confiabilidad"
+    };
+
+    const CONTEXT_WARNINGS = {
+        "halla": {
+            replacement: "haya",
+            message: "Verifica si corresponde a 'haya' (verbo haber / árbol), 'halla' (encontrar) o 'aya' (niñera).",
+            category: "grammar"
+        },
+        "echo": {
+            replacement: "hecho",
+            message: "Verifica si es 'hecho' (del verbo hacer, con h) o 'echo' (del verbo echar, sin h).",
+            category: "grammar"
+        },
+        "ves": {
+            replacement: "vez",
+            message: "Verifica si es 'vez' (ocasión/turno) o 'ves' (del verbo ver).",
+            category: "grammar"
+        },
+        "hay": {
+            replacement: "ahí",
+            message: "Verifica si indica lugar ('ahí'), exclamación ('¡ay!') o verbo haber ('hay').",
+            category: "grammar"
+        }
+    };
+
+    // ----------------------------------------------------------------------------
+    // 3. ESTADO GLOBAL DE LA APLICACIÓN
+    // ----------------------------------------------------------------------------
+    const AppState = {
+        fileName: "",
+        zipInstance: null,
+        xmlDoc: null,
+        stylesXmlDoc: null,
+        paragraphs: [], // Array de { id, element, runs, fullText, blockType, headingLevel, isTableCell }
+        issues: [],     // Array de { id, paraIndex, start, end, original, replacement, message, category, status, safeAuto }
+        activeIssueId: null,
+        editingParaIndex: null,
+        apiUsed: false,
+        activeTab: "spelling", // "spelling" | "norms"
+        mobileSection: "document", // "document" | "spelling" | "norms"
+        sheetZoom: 1.0,
+        appliedNorm: null,
+        diagnosticSummary: [],
+        lastExportUrl: null
+    };
+
+    // ----------------------------------------------------------------------------
+    // 4. UTILIDADES DE INTERFAZ, TEMA, PROGRESO Y NAVEGACIÓN MÓVIL
+    // ----------------------------------------------------------------------------
+    function initTheme() {
+        const savedTheme = localStorage.getItem("ortodocx-theme");
+        const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        const theme = savedTheme || (prefersDark ? "dark" : "light");
+        applyTheme(theme);
+    }
+
+    function applyTheme(theme) {
+        document.documentElement.setAttribute("data-theme", theme);
+        localStorage.setItem("ortodocx-theme", theme);
+        const moon = document.getElementById("icon-theme-moon");
+        const sun = document.getElementById("icon-theme-sun");
+        if (moon && sun) {
+            if (theme === "dark") {
+                moon.classList.add("hidden");
+                sun.classList.remove("hidden");
+            } else {
+                sun.classList.add("hidden");
+                moon.classList.remove("hidden");
+            }
+        }
+    }
+
+    function toggleTheme() {
+        const current = document.documentElement.getAttribute("data-theme") || "light";
+        applyTheme(current === "dark" ? "light" : "dark");
+    }
+
+    function updateLoadingProgress(percent, title, subtitle) {
+        const bar = document.getElementById("loading-progress-bar");
+        const text = document.getElementById("loading-progress-text");
+        if (bar) bar.style.width = `${percent}%`;
+        if (text) text.textContent = `${percent}% completado`;
+        if (title) document.getElementById("loading-title").textContent = title;
+        if (subtitle) document.getElementById("loading-subtitle").textContent = subtitle;
+    }
+
+    function showToast(message, type = "info") {
+        const container = document.getElementById("toast-container");
+        const toast = document.createElement("div");
+        const colors = {
+            info: "bg-slate-900 text-white border-slate-700",
+            success: "bg-emerald-600 text-white border-emerald-500",
+            warning: "bg-amber-600 text-white border-amber-500",
+            error: "bg-rose-600 text-white border-rose-500"
+        };
+        const icons = {
+            info: "info",
+            success: "check-circle-2",
+            warning: "alert-triangle",
+            error: "x-circle"
+        };
+        toast.className = `pointer-events-auto flex items-center gap-2.5 px-4 py-3 rounded-2xl shadow-xl border text-xs sm:text-sm font-medium transition-all duration-300 transform translate-y-2 opacity-0 ${colors[type] || colors.info}`;
+        toast.innerHTML = `<i data-lucide="${icons[type] || 'info'}" class="w-4 h-4 shrink-0"></i><span>${escapeHtml(message)}</span>`;
+        container.appendChild(toast);
+        lucide.createIcons();
+
+        requestAnimationFrame(() => {
+            toast.classList.remove("translate-y-2", "opacity-0");
+        });
+
+        setTimeout(() => {
+            toast.classList.add("opacity-0", "translate-y-2");
+            setTimeout(() => toast.remove(), 300);
+        }, 3800);
+    }
+
+    function switchView(viewName) {
+        const uploadView = document.getElementById("upload-view");
+        const loadingView = document.getElementById("loading-view");
+        const editorView = document.getElementById("editor-view");
+        const headerActions = document.getElementById("header-actions");
+        const mobileNav = document.getElementById("mobile-bottom-nav");
+
+        uploadView.classList.add("hidden");
+        loadingView.classList.add("hidden");
+        editorView.classList.add("hidden");
+        editorView.classList.remove("flex");
+        headerActions.classList.add("hidden");
+        headerActions.classList.remove("flex");
+        if (mobileNav) mobileNav.classList.add("hidden");
+
+        if (viewName === "upload") {
+            uploadView.classList.remove("hidden");
+        } else if (viewName === "loading") {
+            loadingView.classList.remove("hidden");
+        } else if (viewName === "editor") {
+            editorView.classList.remove("hidden");
+            editorView.classList.add("flex");
+            headerActions.classList.remove("hidden");
+            headerActions.classList.add("flex");
+            if (mobileNav) mobileNav.classList.remove("hidden");
+            syncMobileNavigationUI();
+        }
+    }
+
+    /**
+     * Sincroniza la navegación móvil inferior (<1024px) con el Split View de escritorio (>=1024px)
+     */
+    function setMobileSection(sectionName) {
+        AppState.mobileSection = sectionName;
+        if (sectionName === "spelling" || sectionName === "norms") {
+            switchRightTab(sectionName);
+        }
+        syncMobileNavigationUI();
+    }
+
+    function syncMobileNavigationUI() {
+        const docCol = document.getElementById("mobile-section-document");
+        const toolsCol = document.getElementById("mobile-section-tools");
+        const btnDoc = document.getElementById("mnav-btn-doc");
+        const btnSpell = document.getElementById("mnav-btn-spelling");
+        const btnNorms = document.getElementById("mnav-btn-norms");
+
+        if (!docCol || !toolsCol) return;
+
+        // Reset estilos de botones móviles
+        [btnDoc, btnSpell, btnNorms].forEach(btn => {
+            if (!btn) return;
+            btn.className = "relative flex flex-col items-center justify-center py-1.5 px-2 rounded-xl text-slate-600 dark:text-slate-400 font-semibold text-[11px] gap-1 transition cursor-pointer";
+        });
+
+        const activeBtnClass = "relative flex flex-col items-center justify-center py-1.5 px-2 rounded-xl text-indigo-600 dark:text-indigo-400 bg-indigo-50/90 dark:bg-indigo-950/80 font-bold text-[11px] gap-1 transition cursor-pointer";
+
+        if (AppState.mobileSection === "document") {
+            docCol.classList.remove("hidden");
+            toolsCol.classList.add("hidden");
+            toolsCol.classList.remove("flex");
+            if (btnDoc) btnDoc.className = activeBtnClass;
+        } else {
+            docCol.classList.add("hidden");
+            toolsCol.classList.remove("hidden");
+            toolsCol.classList.add("flex");
+            if (AppState.mobileSection === "spelling" && btnSpell) {
+                btnSpell.className = activeBtnClass;
+            } else if (AppState.mobileSection === "norms" && btnNorms) {
+                btnNorms.className = activeBtnClass;
+            }
+        }
+    }
+
+    function updateSheetZoom(newZoom) {
+        AppState.sheetZoom = Math.max(0.75, Math.min(1.4, Number(newZoom.toFixed(2))));
+        const previewContainer = document.getElementById("document-preview-container");
+        const label = document.getElementById("zoom-level-label");
+        if (previewContainer) {
+            previewContainer.style.fontSize = `${Math.round(15 * AppState.sheetZoom)}px`;
+        }
+        if (label) {
+            label.textContent = `${Math.round(AppState.sheetZoom * 100)}%`;
+        }
+    }
+
+    function escapeHtml(str) {
+        if (!str) return "";
+        return str
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    function preserveCase(original, replacement) {
+        if (!original || !replacement) return replacement;
+        if (original === original.toUpperCase() && original.length > 1) {
+            return replacement.toUpperCase();
+        }
+        if (original[0] === original[0].toUpperCase()) {
+            return replacement.charAt(0).toUpperCase() + replacement.slice(1);
+        }
+        return replacement;
+    }
+
+    function cmToTwips(cm) {
+        return Math.round(parseFloat(cm) * 566.93);
+    }
+
+    // ----------------------------------------------------------------------------
+    // 5. LECTURA Y PARSEO DEL ARCHIVO .DOCX (PRESERVANDO ESTRUCTURA XML Y ANDROID)
+    // ----------------------------------------------------------------------------
+    async function readFileAsArrayBufferSafe(fileOrBlob) {
+        if (typeof fileOrBlob.arrayBuffer === "function") {
+            try {
+                return await fileOrBlob.arrayBuffer();
+            } catch (e) {
+                console.warn("arrayBuffer() falló, usando FileReader como respaldo:", e);
+            }
+        }
+        return await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error("No se pudo leer el archivo desde el almacenamiento del dispositivo. Verifica los permisos o muévelo a Descargas."));
+            reader.readAsArrayBuffer(fileOrBlob);
+        });
+    }
+
+    async function inspectBinarySignature(fileOrBlob) {
+        if (fileOrBlob.size < 4) {
+            throw new Error("El archivo seleccionado está vacío o dañado.");
+        }
+        const headerSlice = fileOrBlob.slice(0, 4);
+        const headerBuffer = await readFileAsArrayBufferSafe(headerSlice);
+        const bytes = new Uint8Array(headerBuffer);
+
+        if (bytes[0] === 0xD0 && bytes[1] === 0xCF && bytes[2] === 0x11 && bytes[3] === 0xE0) {
+            throw new Error("El archivo está en formato antiguo (.doc de Word 97-2003). Ábrelo en Word, WPS Office o Google Docs y guárdalo como .docx.");
+        }
+
+        const isZip = bytes[0] === 0x50 && bytes[1] === 0x4B && (bytes[2] === 0x03 || bytes[2] === 0x05 || bytes[2] === 0x07);
+        if (!isZip) {
+            throw new Error("El archivo seleccionado no tiene una estructura .docx válida. Asegúrate de elegir un documento de Word (.docx).");
+        }
+    }
+
+    async function processDocxFile(fileOrBlob, rawFileName) {
+        try {
+            let cleanName = (rawFileName || "documento.docx").trim();
+            if (!/\.docx$/i.test(cleanName)) {
+                cleanName = cleanName.replace(/\.[^.]+$/, "") + ".docx";
+            }
+
+            AppState.fileName = cleanName;
+            AppState.appliedNorm = null;
+            AppState.diagnosticSummary = [];
+            AppState.mobileSection = "document";
+
+            const dlBanner = document.getElementById("direct-download-banner");
+            if (dlBanner) dlBanner.classList.add("hidden");
+
+            switchView("loading");
+            updateLoadingProgress(18, "Leyendo archivo desde el dispositivo...", "Verificando firma binaria y estructura OpenXML (.docx).");
+
+            await inspectBinarySignature(fileOrBlob);
+            const arrayBuffer = await readFileAsArrayBufferSafe(fileOrBlob);
+
+            updateLoadingProgress(45, "Descomprimiendo paquete .docx...", "Extrayendo word/document.xml, párrafos, tablas y estilos.");
+
+            let zip;
+            try {
+                zip = await JSZip.loadAsync(arrayBuffer);
+            } catch (zipErr) {
+                throw new Error("No se pudo descomprimir el paquete .docx. El archivo puede estar protegido con contraseña o corrupto.");
+            }
+
+            const docXmlFile = zip.file("word/document.xml");
+            if (!docXmlFile) {
+                throw new Error("El archivo comprimido no contiene 'word/document.xml'. Verifica que sea un documento Word (.docx).");
+            }
+
+            const xmlText = await docXmlFile.async("string");
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlText, "application/xml");
+
+            if (xmlDoc.querySelector("parsererror")) {
+                throw new Error("Error al interpretar el XML interno del documento.");
+            }
+
+            let stylesXmlDoc = null;
+            const stylesXmlFile = zip.file("word/styles.xml");
+            if (stylesXmlFile) {
+                const stylesText = await stylesXmlFile.async("string");
+                const parsedStyles = parser.parseFromString(stylesText, "application/xml");
+                if (!parsedStyles.querySelector("parsererror")) {
+                    stylesXmlDoc = parsedStyles;
+                }
+            }
+
+            AppState.zipInstance = zip;
+            AppState.xmlDoc = xmlDoc;
+            AppState.stylesXmlDoc = stylesXmlDoc;
+
+            extractParagraphsFromXml();
+
+            if (AppState.paragraphs.length === 0) {
+                throw new Error("El documento no contiene párrafos de texto analizables.");
+            }
+
+            updateLoadingProgress(75, "Analizando ortografía y estructura...", "Revisando tildes, gramática y jerarquía de capítulos/citas.");
+
+            await runFullAnalysis();
+
+            updateLoadingProgress(100, "¡Listo!", "Preparando vista interactiva...");
+
+            document.getElementById("doc-filename").textContent = AppState.fileName;
+            document.getElementById("norm-preset-select").value = "none";
+            syncNormFormWithPreset("none");
+            updateDiagnosticPanel();
+            renderAll();
+            switchView("editor");
+            showToast(`"${AppState.fileName}" cargado (${AppState.paragraphs.length} bloques)`, "success");
+
+        } catch (err) {
+            console.error("Error procesando .docx:", err);
+            switchView("upload");
+            showToast(err.message || "Error al leer el archivo desde el dispositivo", "error");
+        }
+    }
+
+    function classifyParagraphStructure(pEl, fullText, styleVal, isTableCell) {
+        const trimmed = fullText.trim();
+        const words = trimmed.split(/\s+/).filter(Boolean);
+        const wordCount = words.length;
+
+        if (isTableCell) {
+            return { blockType: "table", headingLevel: 0 };
+        }
+
+        if (/heading\s*1|t[ií]tulo\s*1|title/i.test(styleVal)) {
+            return { blockType: "heading", headingLevel: 1 };
+        }
+        if (/heading\s*2|t[ií]tulo\s*2|subtitle/i.test(styleVal)) {
+            return { blockType: "heading", headingLevel: 2 };
+        }
+        if (/heading\s*3|t[ií]tulo\s*3/i.test(styleVal)) {
+            return { blockType: "heading", headingLevel: 3 };
+        }
+
+        const chapterRegex = /^(CAP[IÍ]TULO\s+[IVX0-9]+|INTRODUCCI[OÓ]N|RESUMEN|ABSTRACT|DEDICATORIA|AGRADECIMIENTOS|ÍNDICE|INDICE|CONCLUSIONES|RECOMENDACIONES|REFERENCIAS(\s+BIBLIOGR[AÁ]FICAS)?|ANEXOS|EL\s+PROBLEMA|MARCO\s+TE[OÓ]RICO|MARCO\s+METODOL[OÓ]GICO|AN[AÁ]LISIS\s+DE\s+LOS\s+RESULTADOS)$/i;
+        if (chapterRegex.test(trimmed)) {
+            return { blockType: "heading", headingLevel: 1 };
+        }
+
+        if (wordCount <= 12 && !/[.?!:;]$/.test(trimmed) && trimmed === trimmed.toUpperCase() && /[A-ZÁÉÍÓÚÑ]{3,}/.test(trimmed)) {
+            return { blockType: "heading", headingLevel: 1 };
+        }
+
+        const hasBold = pEl.getElementsByTagName("w:b").length > 0 || pEl.getElementsByTagNameNS("*", "b").length > 0;
+        const hasItalic = pEl.getElementsByTagName("w:i").length > 0 || pEl.getElementsByTagNameNS("*", "i").length > 0;
+
+        if (wordCount <= 14 && !/[.?!:;]$/.test(trimmed) && (hasBold || hasItalic)) {
+            if (hasBold && hasItalic) {
+                return { blockType: "heading", headingLevel: 3 };
+            }
+            return { blockType: "heading", headingLevel: 2 };
+        }
+
+        const quoteIntroRegex = /(seg[uú]n|de acuerdo con|como señala|para|cita por|afirma|sostiene|expresa|define)\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+.*\(\d{4}\)|^["«“].*["»”]\.?$/i;
+        if (wordCount > 40 && quoteIntroRegex.test(trimmed)) {
+            return { blockType: "blockquote", headingLevel: 0 };
+        }
+
+        return { blockType: "body", headingLevel: 0 };
+    }
+
+    function extractParagraphsFromXml() {
+        const xmlDoc = AppState.xmlDoc;
+        const wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        let pElements = Array.from(xmlDoc.getElementsByTagNameNS(wNs, "p"));
+        if (pElements.length === 0) {
+            pElements = Array.from(xmlDoc.getElementsByTagName("w:p"));
+        }
+
+        const paragraphs = [];
+
+        pElements.forEach((pEl, idx) => {
+            let tElements = Array.from(pEl.getElementsByTagNameNS(wNs, "t"));
+            if (tElements.length === 0) {
+                tElements = Array.from(pEl.getElementsByTagName("w:t"));
+            }
+
+            if (tElements.length === 0) return;
+
+            const runs = tElements.map(tNode => ({
+                node: tNode,
+                text: tNode.textContent || ""
+            }));
+
+            const fullText = runs.map(r => r.text).join("");
+            if (!fullText.trim()) return;
+
+            const pStyle = pEl.querySelector("pStyle") || pEl.getElementsByTagName("w:pStyle")[0];
+            const styleVal = pStyle ? (pStyle.getAttribute("w:val") || pStyle.getAttribute("val") || "") : "";
+
+            let parent = pEl.parentNode;
+            let isTableCell = false;
+            while (parent) {
+                if (parent.nodeName === "w:tc" || parent.localName === "tc") {
+                    isTableCell = true;
+                    break;
+                }
+                parent = parent.parentNode;
+            }
+
+            const { blockType, headingLevel } = classifyParagraphStructure(pEl, fullText, styleVal, isTableCell);
+
+            paragraphs.push({
+                id: idx,
+                element: pEl,
+                runs,
+                fullText,
+                blockType,
+                headingLevel,
+                isHeading: blockType === "heading",
+                isTableCell
+            });
+        });
+
+        AppState.paragraphs = paragraphs;
+    }
+
+    function syncParagraphToXml(para) {
+        const newText = para.fullText;
+        const runs = para.runs;
+
+        if (runs.length === 0) return;
+
+        if (runs.length === 1) {
+            runs[0].text = newText;
+            runs[0].node.textContent = newText;
+            runs[0].node.setAttribute("xml:space", "preserve");
+            return;
+        }
+
+        const oldTotalLen = runs.reduce((acc, r) => acc + r.text.length, 0);
+        if (oldTotalLen === 0) {
+            runs[0].text = newText;
+            runs[0].node.textContent = newText;
+            runs[0].node.setAttribute("xml:space", "preserve");
+            return;
+        }
+
+        let cursor = 0;
+        for (let i = 0; i < runs.length; i++) {
+            if (i === runs.length - 1) {
+                const slice = newText.slice(cursor);
+                runs[i].text = slice;
+                runs[i].node.textContent = slice;
+                runs[i].node.setAttribute("xml:space", "preserve");
+            } else {
+                const ratio = runs[i].text.length / oldTotalLen;
+                let targetEnd = Math.round(cursor + newText.length * ratio);
+                targetEnd = Math.max(cursor, Math.min(newText.length, targetEnd));
+
+                if (targetEnd < newText.length && newText[targetEnd] !== " ") {
+                    const nextSpace = newText.indexOf(" ", targetEnd);
+                    const prevSpace = newText.lastIndexOf(" ", targetEnd);
+                    if (nextSpace !== -1 && (nextSpace - targetEnd) <= 4) {
+                        targetEnd = nextSpace;
+                    } else if (prevSpace > cursor && (targetEnd - prevSpace) <= 4) {
+                        targetEnd = prevSpace;
+                    }
+                }
+
+                const slice = newText.slice(cursor, targetEnd);
+                runs[i].text = slice;
+                runs[i].node.textContent = slice;
+                runs[i].node.setAttribute("xml:space", "preserve");
+                cursor = targetEnd;
+            }
+        }
+    }
+
+    // ----------------------------------------------------------------------------
+    // 6. MOTOR HÍBRIDO DE CORRECCIÓN ORTOGRÁFICA Y GRAMATICAL EN ESPAÑOL
+    // ----------------------------------------------------------------------------
+    function analyzeLocally(paragraphs) {
+        const found = [];
+
+        paragraphs.forEach((para, pIdx) => {
+            const text = para.fullText;
+
+            // A. Detección de palabras en diccionario de tildes y errores frecuentes
+            const wordRegex = /[a-zA-ZáéíóúüñÁÉÍÓÚÜÑ]+/g;
+            let match;
+            while ((match = wordRegex.exec(text)) !== null) {
+                const word = match[0];
+                const lower = word.toLowerCase();
+                const start = match.index;
+                const end = start + word.length;
+
+                if (SPANISH_DICTIONARY[lower]) {
+                    const suggestion = preserveCase(word, SPANISH_DICTIONARY[lower]);
+                    if (suggestion !== word) {
+                        found.push({
+                            paraIndex: pIdx,
+                            start,
+                            end,
+                            original: word,
+                            replacement: suggestion,
+                            message: `Error ortográfico o falta de tilde. Se sugiere «${suggestion}».`,
+                            category: "spelling",
+                            safeAuto: true
+                        });
+                    }
+                } else if (CONTEXT_WARNINGS[lower]) {
+                    const warn = CONTEXT_WARNINGS[lower];
+                    const suggestion = preserveCase(word, warn.replacement);
+                    found.push({
+                        paraIndex: pIdx,
+                        start,
+                        end,
+                        original: word,
+                        replacement: suggestion,
+                        message: warn.message,
+                        category: warn.category,
+                        safeAuto: false
+                    });
+                }
+            }
+
+            // B. Palabras repetidas consecutivas (ej. "el el", "de de")
+            const repeatRegex = /\b([a-zA-ZáéíóúüñÁÉÍÓÚÜÑ]{2,})\s+\1\b/gi;
+            while ((match = repeatRegex.exec(text)) !== null) {
+                found.push({
+                    paraIndex: pIdx,
+                    start: match.index,
+                    end: match.index + match[0].length,
+                    original: match[0],
+                    replacement: match[1],
+                    message: `Palabra duplicada consecutiva («${match[1]}»).`,
+                    category: "grammar",
+                    safeAuto: true
+                });
+            }
+
+            // C. Doble espacio entre palabras
+            const doubleSpaceRegex = / {2,}/g;
+            while ((match = doubleSpaceRegex.exec(text)) !== null) {
+                found.push({
+                    paraIndex: pIdx,
+                    start: match.index,
+                    end: match.index + match[0].length,
+                    original: match[0],
+                    replacement: " ",
+                    message: "Espacios múltiples innecesarios.",
+                    category: "typography",
+                    safeAuto: true
+                });
+            }
+
+            // D. Espacio antes de signo de puntuación (, . ; : ? !)
+            const spaceBeforePunct = /\s+([,.;:?!])/g;
+            while ((match = spaceBeforePunct.exec(text)) !== null) {
+                found.push({
+                    paraIndex: pIdx,
+                    start: match.index,
+                    end: match.index + match[0].length,
+                    original: match[0],
+                    replacement: match[1],
+                    message: `No debe haber espacio antes del signo «${match[1]}».`,
+                    category: "typography",
+                    safeAuto: true
+                });
+            }
+
+            // E. Minúscula después de punto y seguido
+            const lowerAfterDot = /([.?!])\s+([a-záéíóúüñ])/g;
+            while ((match = lowerAfterDot.exec(text)) !== null) {
+                const cap = match[2].toUpperCase();
+                found.push({
+                    paraIndex: pIdx,
+                    start: match.index,
+                    end: match.index + match[0].length,
+                    original: match[0],
+                    replacement: `${match[1]} ${cap}`,
+                    message: "Se recomienda iniciar con mayúscula después de punto.",
+                    category: "grammar",
+                    safeAuto: true
+                });
+            }
+        });
+
+        return found;
+    }
+
+    async function analyzeWithLanguageTool(paragraphs) {
+        const results = [];
+        // Agrupar párrafos en lotes para respetar límite de caracteres de LanguageTool
+        const maxBatchChars = 3500;
+        let currentBatch = [];
+        let currentLength = 0;
+        const batches = [];
+
+        paragraphs.forEach((p, idx) => {
+            if (currentLength + p.fullText.length > maxBatchChars && currentBatch.length > 0) {
+                batches.push(currentBatch);
+                currentBatch = [];
+                currentLength = 0;
+            }
+            currentBatch.push({ pIdx: idx, text: p.fullText });
+            currentLength += p.fullText.length + 2;
+        });
+        if (currentBatch.length > 0) batches.push(currentBatch);
+
+        for (const batch of batches) {
+            const offsets = [];
+            let joinedText = "";
+            batch.forEach((item, i) => {
+                offsets.push({
+                    pIdx: item.pIdx,
+                    startOffset: joinedText.length,
+                    endOffset: joinedText.length + item.text.length
+                });
+                joinedText += item.text + (i < batch.length - 1 ? "\n\n" : "");
+            });
+
+            const params = new URLSearchParams();
+            params.append("text", joinedText);
+            params.append("language", "es");
+            params.append("enabledOnly", "false");
+
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 6500);
+
+            const response = await fetch("https://api.languagetool.org/v2/check", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: params.toString(),
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+
+            if (!response.ok) {
+                throw new Error(`LanguageTool HTTP ${response.status}`);
+            }
+
+            const data = await response.json();
+            if (data && Array.isArray(data.matches)) {
+                data.matches.forEach(m => {
+                    if (!m.replacements || m.replacements.length === 0) return;
+                    const matchStart = m.offset;
+                    const matchEnd = m.offset + m.length;
+
+                    const target = offsets.find(o => matchStart >= o.startOffset && matchEnd <= o.endOffset);
+                    if (!target) return;
+
+                    const localStart = matchStart - target.startOffset;
+                    const localEnd = matchEnd - target.startOffset;
+                    const original = paragraphs[target.pIdx].fullText.slice(localStart, localEnd);
+                    const replacement = m.replacements[0].value;
+
+                    if (!original || original === replacement) return;
+
+                    let category = "grammar";
+                    const issueType = (m.rule?.issueType || "").toLowerCase();
+                    if (issueType === "misspelling" || issueType === "typographical") {
+                        category = issueType === "typographical" ? "typography" : "spelling";
+                    }
+
+                    results.push({
+                        paraIndex: target.pIdx,
+                        start: localStart,
+                        end: localEnd,
+                        original,
+                        replacement,
+                        message: m.message || "Sugerencia de corrección.",
+                        category,
+                        safeAuto: category === "spelling" || category === "typography"
+                    });
+                });
+            }
+        }
+
+        return results;
+    }
+
+    async function runFullAnalysis() {
+        const localIssues = analyzeLocally(AppState.paragraphs);
+        let apiIssues = [];
+
+        try {
+            apiIssues = await analyzeWithLanguageTool(AppState.paragraphs);
+            AppState.apiUsed = true;
+        } catch (e) {
+            console.warn("LanguageTool no disponible o sin conexión, usando motor local:", e.message);
+            AppState.apiUsed = false;
+        }
+
+        // Fusionar resultados evitando solapamientos en el mismo párrafo
+        const merged = [];
+        const addIfNotOverlapping = (candidate) => {
+            const overlaps = merged.some(existing =>
+                existing.paraIndex === candidate.paraIndex &&
+                Math.max(existing.start, candidate.start) < Math.min(existing.end, candidate.end)
+            );
+            if (!overlaps) {
+                merged.push({
+                    ...candidate,
+                    id: `iss_${merged.length}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                    status: "pending"
+                });
+            }
+        };
+
+        localIssues.forEach(addIfNotOverlapping);
+        apiIssues.forEach(addIfNotOverlapping);
+
+        merged.sort((a, b) => a.paraIndex - b.paraIndex || a.start - b.start);
+        AppState.issues = merged;
+
+        const badge = document.getElementById("engine-badge");
+        if (badge) {
+            if (AppState.apiUsed) {
+                badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Motor Híbrido (Online + ES)`;
+            } else {
+                badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span> Motor Local ES`;
+            }
+        }
+    }
+
+    // ----------------------------------------------------------------------------
+    // 7. APLICACIÓN DE CORRECCIONES ORTOGRÁFICAS AL TEXTO Y AL XML
+    // ----------------------------------------------------------------------------
+    function applyIssueFix(issueId) {
+        const issue = AppState.issues.find(i => i.id === issueId);
+        if (!issue || issue.status === "fixed") return;
+
+        const para = AppState.paragraphs[issue.paraIndex];
+        if (!para) return;
+
+        const before = para.fullText.slice(0, issue.start);
+        const after = para.fullText.slice(issue.end);
+        const delta = issue.replacement.length - (issue.end - issue.start);
+
+        para.fullText = before + issue.replacement + after;
+        syncParagraphToXml(para);
+
+        issue.status = "fixed";
+        issue.end = issue.start + issue.replacement.length;
+
+        // Desplazar índices de incidencias posteriores en el mismo párrafo
+        AppState.issues.forEach(other => {
+            if (other.id !== issue.id && other.paraIndex === issue.paraIndex && other.start >= issue.start + (issue.end - issue.start - delta)) {
+                other.start += delta;
+                other.end += delta;
+            }
+        });
+
+        renderAll();
+    }
+
+    function ignoreIssue(issueId) {
+        const issue = AppState.issues.find(i => i.id === issueId);
+        if (!issue) return;
+        issue.status = "ignored";
+        renderAll();
+    }
+
+    function applyAllFixes() {
+        const pendingSafe = AppState.issues.filter(i => i.status === "pending" && i.safeAuto);
+        if (pendingSafe.length === 0) {
+            showToast("No hay correcciones automáticas pendientes", "info");
+            return;
+        }
+
+        // Aplicar de atrás hacia adelante por párrafo para no invalidar índices
+        const sortedDesc = [...pendingSafe].sort((a, b) => b.paraIndex - a.paraIndex || b.start - a.start);
+        sortedDesc.forEach(iss => applyIssueFix(iss.id));
+
+        showToast(`Se aplicaron ${pendingSafe.length} correcciones ortográficas`, "success");
+    }
+
+    // ----------------------------------------------------------------------------
+    // 8. MOTOR DE NORMALIZACIÓN ACADÉMICA XML (APA 7, UPEL, UDO, UCV/LUZ, URBE)
+    // ----------------------------------------------------------------------------
+    function syncNormFormWithPreset(presetKey) {
+        const norm = ACADEMIC_NORMS[presetKey] || ACADEMIC_NORMS.none;
+        document.getElementById("norm-description").textContent = norm.description;
+
+        document.getElementById("param-font").value = norm.font;
+        document.getElementById("param-size").value = String(norm.size);
+        document.getElementById("param-line-spacing").value = String(norm.lineSpacing);
+        document.getElementById("param-align").value = norm.align;
+        document.getElementById("param-indent").value = norm.indentCm.toFixed(2);
+        document.getElementById("param-margin-top").value = norm.marginTop.toFixed(2);
+        document.getElementById("param-margin-bottom").value = norm.marginBottom.toFixed(2);
+        document.getElementById("param-margin-left").value = norm.marginLeft.toFixed(2);
+        document.getElementById("param-margin-right").value = norm.marginRight.toFixed(2);
+        document.getElementById("param-block-quotes").checked = norm.blockQuotes;
+
+        const customTag = document.getElementById("custom-mode-tag");
+        if (presetKey === "custom") {
+            customTag.classList.remove("hidden");
+        } else {
+            customTag.classList.add("hidden");
+        }
+    }
+
+    function readNormConfigFromForm() {
+        const presetId = document.getElementById("norm-preset-select").value;
+        const baseNorm = ACADEMIC_NORMS[presetId] || ACADEMIC_NORMS.custom;
+
+        return {
+            id: presetId,
+            shortName: baseNorm.shortName,
+            name: baseNorm.name,
+            font: document.getElementById("param-font").value,
+            size: parseInt(document.getElementById("param-size").value, 10) || 12,
+            lineSpacing: parseFloat(document.getElementById("param-line-spacing").value) || 1.5,
+            align: document.getElementById("param-align").value,
+            indentCm: parseFloat(document.getElementById("param-indent").value) || 0,
+            marginTop: parseFloat(document.getElementById("param-margin-top").value) || 2.54,
+            marginBottom: parseFloat(document.getElementById("param-margin-bottom").value) || 2.54,
+            marginLeft: parseFloat(document.getElementById("param-margin-left").value) || 2.54,
+            marginRight: parseFloat(document.getElementById("param-margin-right").value) || 2.54,
+            blockQuotes: document.getElementById("param-block-quotes").checked,
+            headingStyle: baseNorm.headingStyle,
+            pageNumberTopRight: baseNorm.pageNumberTopRight
+        };
+    }
+
+    function getOrCreateXmlChild(parent, tagName, wNs) {
+        const local = tagName.replace(/^w:/, "");
+        let child = parent.getElementsByTagNameNS(wNs, local)[0] || parent.getElementsByTagName(tagName)[0];
+        if (!child) {
+            child = parent.ownerDocument.createElementNS(wNs, tagName);
+            parent.appendChild(child);
+        }
+        return child;
+    }
+
+    function applyAcademicNormToXml(config) {
+        const xmlDoc = AppState.xmlDoc;
+        const wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+        // 1. Configurar márgenes de página en <w:sectPr> -> <w:pgMar>
+        let body = xmlDoc.getElementsByTagNameNS(wNs, "body")[0] || xmlDoc.getElementsByTagName("w:body")[0];
+        if (body) {
+            let sectPr = body.getElementsByTagNameNS(wNs, "sectPr")[0] || body.getElementsByTagName("w:sectPr")[0];
+            if (!sectPr) {
+                sectPr = xmlDoc.createElementNS(wNs, "w:sectPr");
+                body.appendChild(sectPr);
+            }
+            const pgMar = getOrCreateXmlChild(sectPr, "w:pgMar", wNs);
+            pgMar.setAttribute("w:top", String(cmToTwips(config.marginTop)));
+            pgMar.setAttribute("w:bottom", String(cmToTwips(config.marginBottom)));
+            pgMar.setAttribute("w:left", String(cmToTwips(config.marginLeft)));
+            pgMar.setAttribute("w:right", String(cmToTwips(config.marginRight)));
+        }
+
+        const lineTwips = Math.round(config.lineSpacing * 240);
+        const halfPoints = String(config.size * 2);
+        const indentTwips = cmToTwips(config.indentCm);
+        let headingsFormatted = 0;
+        let quotesFormatted = 0;
+
+        // 2. Recorrer cada párrafo y aplicar propiedades XML
+        AppState.paragraphs.forEach(para => {
+            const pEl = para.element;
+            let pPr = pEl.getElementsByTagNameNS(wNs, "pPr")[0] || pEl.getElementsByTagName("w:pPr")[0];
+            if (!pPr) {
+                pPr = xmlDoc.createElementNS(wNs, "w:pPr");
+                pEl.insertBefore(pPr, pEl.firstChild);
+            }
+
+            const jc = getOrCreateXmlChild(pPr, "w:jc", wNs);
+            const spacing = getOrCreateXmlChild(pPr, "w:spacing", wNs);
+            const ind = getOrCreateXmlChild(pPr, "w:ind", wNs);
+
+            spacing.setAttribute("w:before", "0");
+            spacing.setAttribute("w:after", "0");
+            spacing.setAttribute("w:line", String(lineTwips));
+            spacing.setAttribute("w:lineRule", "auto");
+
+            let makeBold = false;
+            let makeItalic = false;
+
+            if (para.blockType === "heading") {
+                headingsFormatted++;
+                ind.setAttribute("w:firstLine", "0");
+                ind.removeAttribute("w:left");
+                ind.removeAttribute("w:right");
+
+                if (para.headingLevel === 1) {
+                    jc.setAttribute("w:val", "center");
+                    makeBold = true;
+                    if (config.headingStyle === "upel") {
+                        para.fullText = para.fullText.toUpperCase();
+                        syncParagraphToXml(para);
+                    }
+                } else if (para.headingLevel === 2) {
+                    jc.setAttribute("w:val", "left");
+                    makeBold = true;
+                } else {
+                    jc.setAttribute("w:val", "left");
+                    makeBold = true;
+                    makeItalic = true;
+                }
+            } else if (para.blockType === "blockquote" && config.blockQuotes) {
+                quotesFormatted++;
+                jc.setAttribute("w:val", config.align);
+                ind.setAttribute("w:firstLine", "0");
+                ind.setAttribute("w:left", String(cmToTwips(1.27)));
+                if (config.headingStyle === "upel") {
+                    ind.setAttribute("w:right", String(cmToTwips(1.27)));
+                    spacing.setAttribute("w:line", "240"); // Interlineado sencillo (1.0) en citas largas UPEL/VE
+                }
+            } else if (para.isTableCell) {
+                jc.setAttribute("w:val", "left");
+                ind.setAttribute("w:firstLine", "0");
+                spacing.setAttribute("w:line", "240");
+            } else {
+                jc.setAttribute("w:val", config.align);
+                ind.setAttribute("w:firstLine", String(indentTwips));
+                ind.removeAttribute("w:left");
+                ind.removeAttribute("w:right");
+            }
+
+            // 3. Aplicar fuente y tamaño a todos los <w:r> del párrafo
+            const rElements = Array.from(pEl.getElementsByTagNameNS(wNs, "r"));
+            const runsList = rElements.length > 0 ? rElements : Array.from(pEl.getElementsByTagName("w:r"));
+
+            runsList.forEach(rEl => {
+                let rPr = rEl.getElementsByTagNameNS(wNs, "rPr")[0] || rEl.getElementsByTagName("w:rPr")[0];
+                if (!rPr) {
+                    rPr = xmlDoc.createElementNS(wNs, "w:rPr");
+                    rEl.insertBefore(rPr, rEl.firstChild);
+                }
+
+                const rFonts = getOrCreateXmlChild(rPr, "w:rFonts", wNs);
+                rFonts.setAttribute("w:ascii", config.font);
+                rFonts.setAttribute("w:hAnsi", config.font);
+                rFonts.setAttribute("w:cs", config.font);
+
+                const sz = getOrCreateXmlChild(rPr, "w:sz", wNs);
+                sz.setAttribute("w:val", halfPoints);
+                const szCs = getOrCreateXmlChild(rPr, "w:szCs", wNs);
+                szCs.setAttribute("w:val", halfPoints);
+
+                if (makeBold) {
+                    getOrCreateXmlChild(rPr, "w:b", wNs);
+                }
+                if (makeItalic) {
+                    getOrCreateXmlChild(rPr, "w:i", wNs);
+                }
+            });
+        });
+
+        AppState.appliedNorm = config;
+        AppState.diagnosticSummary = [
+            `Márgenes: Sup ${config.marginTop}cm • Inf ${config.marginBottom}cm • Izq ${config.marginLeft}cm • Der ${config.marginRight}cm`,
+            `Tipografía: ${config.font} ${config.size} pt • Interlineado ${config.lineSpacing}`,
+            `Sangría 1.ª línea: ${config.indentCm} cm • Alineación: ${config.align === "left" ? "Izquierda" : "Justificada"}`,
+            `${headingsFormatted} encabezados y ${quotesFormatted} citas largas (>40 palabras) formateados`
+        ];
+    }
+
+    // ----------------------------------------------------------------------------
+    // 9. RENDERIZADO DE LA VISTA PREVIA, SUGERENCIAS Y DIAGNÓSTICO
+    // ----------------------------------------------------------------------------
+    function switchRightTab(tabName) {
+        AppState.activeTab = tabName;
+        const btnSpell = document.getElementById("tab-btn-spelling");
+        const btnNorms = document.getElementById("tab-btn-norms");
+        const panelSpell = document.getElementById("panel-spelling");
+        const panelNorms = document.getElementById("panel-norms");
+
+        const activeTabClass = "flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-bold transition cursor-pointer bg-white dark:bg-slate-800 text-indigo-700 dark:text-indigo-300 shadow-2xs border border-slate-200/80 dark:border-slate-700";
+        const inactiveTabClass = "flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs sm:text-sm font-semibold transition cursor-pointer text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white";
+
+        if (tabName === "spelling") {
+            btnSpell.className = activeTabClass;
+            btnNorms.className = inactiveTabClass;
+            panelSpell.classList.remove("hidden");
+            panelSpell.classList.add("flex");
+            panelNorms.classList.add("hidden");
+            panelNorms.classList.remove("flex");
+        } else {
+            btnNorms.className = activeTabClass;
+            btnSpell.className = inactiveTabClass;
+            panelNorms.classList.remove("hidden");
+            panelNorms.classList.add("flex");
+            panelSpell.classList.add("hidden");
+            panelSpell.classList.remove("flex");
+        }
+    }
+
+    function updateDiagnosticPanel() {
+        const pill = document.getElementById("diagnostic-status-pill");
+        const list = document.getElementById("diagnostic-checklist");
+        if (!pill || !list) return;
+
+        const headingsCount = AppState.paragraphs.filter(p => p.blockType === "heading").length;
+        const quotesCount = AppState.paragraphs.filter(p => p.blockType === "blockquote").length;
+
+        if (!AppState.appliedNorm) {
+            pill.textContent = "Pendiente";
+            pill.className = "text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300";
+            list.innerHTML = `
+                <li class="flex items-center gap-2"><i data-lucide="layers" class="w-3.5 h-3.5 text-indigo-500 shrink-0"></i> <span>${AppState.paragraphs.length} bloques analizados (${headingsCount} títulos, ${quotesCount} citas largas)</span></li>
+                <li class="flex items-center gap-2"><i data-lucide="arrow-up-circle" class="w-3.5 h-3.5 text-slate-400 shrink-0"></i> <span>Elige una norma arriba y presiona «Aplicar Norma»</span></li>
+            `;
+        } else {
+            pill.textContent = `Aplicada (${AppState.appliedNorm.shortName})`;
+            pill.className = "text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-600 text-white";
+            list.innerHTML = AppState.diagnosticSummary.map(item => `
+                <li class="flex items-start gap-2"><i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5"></i> <span>${escapeHtml(item)}</span></li>
+            `).join("");
+        }
+    }
+
+    function renderDocumentPreview() {
+        const container = document.getElementById("document-preview-container");
+        const sheetWrapper = document.getElementById("academic-sheet-wrapper");
+        const pageNumEl = document.getElementById("sheet-page-number");
+        const rulerInfo = document.getElementById("sheet-ruler-info");
+
+        const norm = AppState.appliedNorm;
+
+        // Aplicar estilos visuales simulados de la norma a la hoja blanca
+        if (norm) {
+            sheetWrapper.classList.remove("font-academic-times", "font-academic-arial", "font-academic-calibri");
+            if (norm.font === "Times New Roman") sheetWrapper.classList.add("font-academic-times");
+            else if (norm.font === "Arial") sheetWrapper.classList.add("font-academic-arial");
+            else sheetWrapper.classList.add("font-academic-calibri");
+
+            // Escalar padding visualmente en móvil y escritorio manteniendo proporción de márgenes
+            const isMobile = window.innerWidth < 640;
+            const scaleFactor = isMobile ? 0.45 : 0.85;
+            sheetWrapper.style.paddingTop = `${(norm.marginTop * scaleFactor).toFixed(2)}rem`;
+            sheetWrapper.style.paddingBottom = `${(norm.marginBottom * scaleFactor).toFixed(2)}rem`;
+            sheetWrapper.style.paddingLeft = `${(norm.marginLeft * scaleFactor).toFixed(2)}rem`;
+            sheetWrapper.style.paddingRight = `${(norm.marginRight * scaleFactor).toFixed(2)}rem`;
+
+            if (norm.pageNumberTopRight) {
+                pageNumEl.classList.remove("hidden");
+            } else {
+                pageNumEl.classList.add("hidden");
+            }
+
+            if (rulerInfo) {
+                rulerInfo.textContent = `${norm.shortName} • ${norm.font} ${norm.size}pt • Int. ${norm.lineSpacing}`;
+            }
+        } else {
+            sheetWrapper.classList.remove("font-academic-times", "font-academic-arial", "font-academic-calibri");
+            sheetWrapper.style.padding = window.innerWidth < 640 ? "1.35rem" : "2.5rem";
+            pageNumEl.classList.add("hidden");
+            if (rulerInfo) {
+                rulerInfo.textContent = "Márgenes originales • Sin norma aplicada";
+            }
+        }
+
+        container.innerHTML = "";
+
+        AppState.paragraphs.forEach((para, pIdx) => {
+            const pCard = document.createElement("div");
+            pCard.className = "group relative rounded-lg hover:bg-slate-50/90 px-2 py-1 -mx-2 transition";
+
+            // Modo edición manual de párrafo
+            if (AppState.editingParaIndex === pIdx) {
+                pCard.innerHTML = `
+                    <div class="bg-indigo-50/70 p-3 rounded-xl border border-indigo-200 space-y-2">
+                        <textarea id="edit-textarea-${pIdx}" rows="4" class="w-full text-sm p-2.5 rounded-xl border border-indigo-300 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500">${escapeHtml(para.fullText)}</textarea>
+                        <div class="flex items-center justify-end gap-2">
+                            <button type="button" data-action="cancel-edit" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 cursor-pointer">Cancelar</button>
+                            <button type="button" data-action="save-edit" data-pidx="${pIdx}" class="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer">Guardar cambios</button>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(pCard);
+                return;
+            }
+
+            // Construir texto con marcas de errores resaltadas
+            const paraIssues = AppState.issues
+                .filter(iss => iss.paraIndex === pIdx)
+                .sort((a, b) => a.start - b.start);
+
+            let htmlContent = "";
+            let lastIdx = 0;
+
+            paraIssues.forEach(iss => {
+                if (iss.start < lastIdx) return;
+                htmlContent += escapeHtml(para.fullText.slice(lastIdx, iss.start));
+
+                let markClass = "issue-mark ";
+                if (iss.status === "fixed") markClass += "issue-fixed";
+                else if (iss.status === "ignored") markClass += "issue-ignored";
+                else if (iss.category === "spelling") markClass += "issue-spelling";
+                else if (iss.category === "grammar") markClass += "issue-grammar";
+                else markClass += "issue-typography";
+
+                if (AppState.activeIssueId === iss.id) {
+                    markClass += " active-mark";
+                }
+
+                const spanText = para.fullText.slice(iss.start, iss.end);
+                htmlContent += `<span class="${markClass}" data-issue-id="${iss.id}" title="${escapeHtml(iss.message)}">${escapeHtml(spanText)}</span>`;
+                lastIdx = iss.end;
+            });
+
+            htmlContent += escapeHtml(para.fullText.slice(lastIdx));
+
+            // Estilos tipográficos visuales según la norma aplicada
+            const pTextEl = document.createElement("p");
+            pTextEl.className = "pr-7 break-words";
+
+            if (norm) {
+                pTextEl.style.lineHeight = String(norm.lineSpacing);
+                if (para.blockType === "heading") {
+                    pTextEl.style.fontWeight = "700";
+                    if (para.headingLevel === 1) {
+                        pTextEl.style.textAlign = "center";
+                    } else if (para.headingLevel === 2) {
+                        pTextEl.style.textAlign = "left";
+                    } else {
+                        pTextEl.style.textAlign = "left";
+                        pTextEl.style.fontStyle = "italic";
+                    }
+                } else if (para.blockType === "blockquote" && norm.blockQuotes) {
+                    pTextEl.style.marginLeft = "1.75rem";
+                    pTextEl.style.marginRight = norm.headingStyle === "upel" ? "1.75rem" : "0";
+                    pTextEl.style.textAlign = norm.align === "both" ? "justify" : "left";
+                    if (norm.headingStyle === "upel") pTextEl.style.lineHeight = "1.15";
+                } else {
+                    pTextEl.style.textAlign = norm.align === "both" ? "justify" : "left";
+                    pTextEl.style.textIndent = `${norm.indentCm * 1.4}rem`;
+                }
+            } else {
+                if (para.blockType === "heading") {
+                    pTextEl.classList.add("font-bold", "text-slate-900");
+                }
+            }
+
+            // Etiqueta discreta para citas largas >40 palabras
+            if (para.blockType === "blockquote") {
+                htmlContent = `<span class="inline-block align-middle mr-1.5 px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 border border-purple-300 text-[10px] font-sans font-bold">Cita &gt;40</span>` + htmlContent;
+            }
+
+            pTextEl.innerHTML = htmlContent;
+            pCard.appendChild(pTextEl);
+
+            // Botón flotante para editar manualmente el párrafo
+            const editBtn = document.createElement("button");
+            editBtn.type = "button";
+            editBtn.className = "opacity-60 sm:opacity-0 group-hover:opacity-100 focus:opacity-100 absolute top-1.5 right-1.5 p-1.5 rounded-lg bg-slate-100 hover:bg-indigo-100 text-slate-600 hover:text-indigo-700 transition cursor-pointer";
+            editBtn.title = "Editar párrafo manualmente";
+            editBtn.innerHTML = `<i data-lucide="pencil" class="w-3.5 h-3.5"></i>`;
+            editBtn.addEventListener("click", () => {
+                AppState.editingParaIndex = pIdx;
+                renderDocumentPreview();
+                lucide.createIcons();
+            });
+            pCard.appendChild(editBtn);
+
+            container.appendChild(pCard);
+        });
+
+        // Eventos delegados dentro de la vista previa
+        container.querySelectorAll("[data-issue-id]").forEach(mark => {
+            mark.addEventListener("click", (e) => {
+                e.stopPropagation();
+                const id = mark.getAttribute("data-issue-id");
+                AppState.activeIssueId = id;
+                if (window.innerWidth < 1024) {
+                    setMobileSection("spelling");
+                } else {
+                    switchRightTab("spelling");
+                }
+                renderAll();
+                const card = document.getElementById(`suggestion-card-${id}`);
+                if (card) card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            });
+        });
+
+        container.querySelectorAll("[data-action='cancel-edit']").forEach(btn => {
+            btn.addEventListener("click", () => {
+                AppState.editingParaIndex = null;
+                renderDocumentPreview();
+                lucide.createIcons();
+            });
+        });
+
+        container.querySelectorAll("[data-action='save-edit']").forEach(btn => {
+            btn.addEventListener("click", async () => {
+                const idx = parseInt(btn.getAttribute("data-pidx"), 10);
+                const ta = document.getElementById(`edit-textarea-${idx}`);
+                if (ta && AppState.paragraphs[idx]) {
+                    AppState.paragraphs[idx].fullText = ta.value;
+                    syncParagraphToXml(AppState.paragraphs[idx]);
+                }
+                AppState.editingParaIndex = null;
+                await runFullAnalysis();
+                renderAll();
+                showToast("Párrafo actualizado y reanalizado", "success");
+            });
+        });
+    }
+
+    function renderSuggestionsList() {
+        const list = document.getElementById("suggestions-list");
+        const filter = document.getElementById("filter-category").value;
+
+        const filtered = AppState.issues.filter(iss => {
+            if (filter === "all") return iss.status !== "ignored";
+            if (filter === "pending") return iss.status === "pending";
+            if (filter === "fixed") return iss.status === "fixed";
+            return iss.category === filter && iss.status !== "ignored";
+        });
+
+        if (filtered.length === 0) {
+            list.innerHTML = `
+                <div class="text-center py-10 px-4">
+                    <div class="w-12 h-12 mx-auto mb-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                        <i data-lucide="check-circle-2" class="w-6 h-6"></i>
+                    </div>
+                    <p class="text-sm font-bold mb-1">¡Sin incidencias en esta vista!</p>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">El texto cumple con las reglas analizadas o ya fue corregido.</p>
+                </div>
+            `;
+            return;
+        }
+
+        const badgeLabels = {
+            spelling: { text: "Ortografía", cls: "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300" },
+            grammar: { text: "Gramática", cls: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" },
+            typography: { text: "Tipografía", cls: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300" }
+        };
+
+        list.innerHTML = filtered.map(iss => {
+            const b = badgeLabels[iss.category] || badgeLabels.spelling;
+            const isSelected = AppState.activeIssueId === iss.id;
+            const isFixed = iss.status === "fixed";
+
+            return `
+                <div id="suggestion-card-${iss.id}" class="ui-surface rounded-2xl border p-3.5 transition-all ${isSelected ? 'ring-2 ring-indigo-500 shadow-md' : 'shadow-2xs'}">
+                    <div class="flex items-center justify-between gap-2 mb-2">
+                        <span class="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide ${b.cls}">${b.text}</span>
+                        <span class="text-[11px] text-slate-400">Bloque #${iss.paraIndex + 1}</span>
+                    </div>
+
+                    <div class="flex flex-wrap items-center gap-2 mb-2 text-sm">
+                        <span class="${isFixed ? 'line-through text-slate-400' : 'bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 line-through'} px-2 py-0.5 rounded-lg font-medium">${escapeHtml(iss.original)}</span>
+                        <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-slate-400"></i>
+                        <span class="bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 px-2.5 py-0.5 rounded-lg font-bold">${escapeHtml(iss.replacement)}</span>
+                    </div>
+
+                    <p class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed mb-3">${escapeHtml(iss.message)}</p>
+
+                    ${isFixed ? `
+                        <div class="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                            <i data-lucide="check-circle-2" class="w-4 h-4"></i> Corregido en el documento
+                        </div>
+                    ` : `
+                        <div class="flex items-center gap-2">
+                            <button type="button" data-fix-id="${iss.id}" class="flex-1 py-2 px-3 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 active:scale-[0.99] transition cursor-pointer flex items-center justify-center gap-1.5">
+                                <i data-lucide="check" class="w-3.5 h-3.5"></i> Aceptar
+                            </button>
+                            <button type="button" data-ignore-id="${iss.id}" class="py-2 px-3 rounded-xl text-xs font-semibold ui-surface-muted border hover:opacity-80 transition cursor-pointer">
+                                Ignorar
+                            </button>
+                        </div>
+                    `}
+                </div>
+            `;
+        }).join("");
+
+        list.querySelectorAll("[data-fix-id]").forEach(btn => {
+            btn.addEventListener("click", () => {
+                applyIssueFix(btn.getAttribute("data-fix-id"));
+            });
+        });
+
+        list.querySelectorAll("[data-ignore-id]").forEach(btn => {
+            btn.addEventListener("click", () => {
+                ignoreIssue(btn.getAttribute("data-ignore-id"));
+            });
+        });
+    }
+
+    function updateStatsUI() {
+        const totalWords = AppState.paragraphs.reduce((sum, p) => sum + p.fullText.trim().split(/\s+/).filter(Boolean).length, 0);
+        const pendingCount = AppState.issues.filter(i => i.status === "pending").length;
+        const fixedCount = AppState.issues.filter(i => i.status === "fixed").length;
+
+        document.getElementById("stat-words").textContent = totalWords.toLocaleString("es-ES");
+        document.getElementById("stat-pending").textContent = String(pendingCount);
+        document.getElementById("stat-fixed").textContent = String(fixedCount);
+        document.getElementById("tab-spelling-count").textContent = String(pendingCount);
+
+        const mnavBadge = document.getElementById("mnav-spelling-badge");
+        if (mnavBadge) {
+            mnavBadge.textContent = String(pendingCount);
+            mnavBadge.classList.toggle("hidden", pendingCount === 0);
+        }
+
+        const normShort = AppState.appliedNorm ? AppState.appliedNorm.shortName : "Original";
+        document.getElementById("stat-norm-short").textContent = normShort;
+        document.getElementById("active-norm-badge").textContent = AppState.appliedNorm ? AppState.appliedNorm.name : "Formato Original";
+    }
+
+    function renderAll() {
+        updateStatsUI();
+        renderDocumentPreview();
+        renderSuggestionsList();
+        updateDiagnosticPanel();
+        lucide.createIcons();
+    }
+
+    // ----------------------------------------------------------------------------
+    // 10. GENERADOR DE TESIS VENEZOLANA DE EJEMPLO (.DOCX EN MEMORIA)
+    // ----------------------------------------------------------------------------
+    async function generateSampleDocxBlob() {
+        const zip = new JSZip();
+        zip.file("[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`);
+        zip.folder("_rels").file(".rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`);
+        zip.folder("word").file("document.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>CAPÍTULO I</w:t></w:r></w:p>
+    <w:p><w:r><w:t>EL PROBLEMA</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Planteamiento del Problema</w:t></w:r></w:p>
+    <w:p><w:r><w:t>En la actualidad, la educacion universitaria en Venezuela enfrenta retos tecnologicos que requieren una revision profunda de los metodos de investigacion cientifica. Sinembargo, muchos estudiantes presentan dificultades al momento de estructurar sus trabajos de grado conforme a las normas academicas vigentes.</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Según Arias (2012), la investigacion documental es un proceso basado en la busqueda, recuperacion, analisis, critica e interpretacion de datos secundarios, es decir, los obtenidos y registrados por otros investigadores en fuentes documentales impresas, audiovisuales o electronicas con el proposito de aportar nuevos conocimientos a la ciencia moderna.</w:t></w:r></w:p>
+    <w:p><w:r><w:t>CAPÍTULO III</w:t></w:r></w:p>
+    <w:p><w:r><w:t>MARCO METODOLÓGICO</w:t></w:r></w:p>
+    <w:p><w:r><w:t>La poblacion objeto de estudio estuvo conformada por cuarenta docentes de la institucion, a quienes se les aplico un cuestionario con validez y confiabilidad comprobada para obtener informacion precisa sobre el el uso de herramientas digitales.</w:t></w:r></w:p>
+  </w:body>
+</w:document>`);
+        return await zip.generateAsync({ type: "blob" });
+    }
+
+    // ----------------------------------------------------------------------------
+    // 11. EXPORTACIÓN FIEL A ARCHIVO .DOCX (COMPATIBLE CON ANDROID Y WEBVIEWS)
+    // ----------------------------------------------------------------------------
+    async function exportCorrectedDocx() {
+        if (!AppState.zipInstance || !AppState.xmlDoc) {
+            showToast("No hay ningún documento cargado para exportar", "error");
+            return;
+        }
+
+        try {
+            const serializer = new XMLSerializer();
+            const updatedXmlString = serializer.serializeToString(AppState.xmlDoc);
+            AppState.zipInstance.file("word/document.xml", updatedXmlString);
+
+            if (AppState.stylesXmlDoc) {
+                const updatedStylesString = serializer.serializeToString(AppState.stylesXmlDoc);
+                AppState.zipInstance.file("word/styles.xml", updatedStylesString);
+            }
+
+            const blob = await AppState.zipInstance.generateAsync({
+                type: "blob",
+                mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            });
+
+            const baseName = AppState.fileName.replace(/\.docx$/i, "");
+            const normSuffix = AppState.appliedNorm && AppState.appliedNorm.id !== "none"
+                ? `_${AppState.appliedNorm.id.toUpperCase()}`
+                : "";
+            const downloadName = `${baseName}_corregido${normSuffix}.docx`;
+
+            if (AppState.lastExportUrl) {
+                URL.revokeObjectURL(AppState.lastExportUrl);
+            }
+
+            const url = URL.createObjectURL(blob);
+            AppState.lastExportUrl = url;
+
+            const banner = document.getElementById("direct-download-banner");
+            const directLink = document.getElementById("direct-download-link");
+            const directFilename = document.getElementById("direct-download-filename");
+            if (banner && directLink && directFilename) {
+                directLink.href = url;
+                directLink.download = downloadName;
+                directFilename.textContent = `Guardar ${downloadName}`;
+                banner.classList.remove("hidden");
+            }
+
+            const a = document.createElement("a");
+            a.style.display = "none";
+            a.href = url;
+            a.download = downloadName;
+            document.body.appendChild(a);
+            a.click();
+
+            setTimeout(() => {
+                if (a.parentNode) document.body.removeChild(a);
+            }, 1000);
+
+            showToast(`Generado "${downloadName}". Revisa tus descargas o usa el enlace superior.`, "success");
+        } catch (err) {
+            console.error(err);
+            showToast("Error al generar el archivo .docx corregido", "error");
+        }
+    }
+
+    // ----------------------------------------------------------------------------
+    // 12. EVENT LISTENERS DE LA INTERFAZ
+    // ----------------------------------------------------------------------------
+    document.addEventListener("DOMContentLoaded", () => {
+        initTheme();
+
+        const btnThemeToggle = document.getElementById("btn-theme-toggle");
+        if (btnThemeToggle) {
+            btnThemeToggle.addEventListener("click", toggleTheme);
+        }
+
+        const dropZone = document.getElementById("drop-zone");
+        const fileInput = document.getElementById("file-input");
+        const btnLoadSample = document.getElementById("btn-load-sample");
+        const btnNewDoc = document.getElementById("btn-new-doc");
+        const btnFixAllTop = document.getElementById("btn-fix-all-top");
+        const btnFixAllPanel = document.getElementById("btn-fix-all-panel");
+        const btnExportDocx = document.getElementById("btn-export-docx");
+        const btnReanalyze = document.getElementById("btn-reanalyze");
+        const filterCategory = document.getElementById("filter-category");
+        const btnCloseDownloadBanner = document.getElementById("btn-close-download-banner");
+
+        if (btnCloseDownloadBanner) {
+            btnCloseDownloadBanner.addEventListener("click", () => {
+                document.getElementById("direct-download-banner").classList.add("hidden");
+            });
+        }
+
+        // Navegación inferior móvil
+        const mnavDoc = document.getElementById("mnav-btn-doc");
+        const mnavSpell = document.getElementById("mnav-btn-spelling");
+        const mnavNorms = document.getElementById("mnav-btn-norms");
+        if (mnavDoc) mnavDoc.addEventListener("click", () => setMobileSection("document"));
+        if (mnavSpell) mnavSpell.addEventListener("click", () => setMobileSection("spelling"));
+        if (mnavNorms) mnavNorms.addEventListener("click", () => setMobileSection("norms"));
+
+        // Controles de zoom de hoja
+        document.getElementById("btn-zoom-in").addEventListener("click", () => updateSheetZoom(AppState.sheetZoom + 0.1));
+        document.getElementById("btn-zoom-out").addEventListener("click", () => updateSheetZoom(AppState.sheetZoom - 0.1));
+        document.getElementById("btn-zoom-reset").addEventListener("click", () => updateSheetZoom(1.0));
+
+        // Acordeón de parámetros normativos
+        const btnToggleAccordion = document.getElementById("btn-toggle-norm-accordion");
+        const accordionBody = document.getElementById("norm-accordion-body");
+        const accordionIcon = document.getElementById("icon-norm-accordion");
+        if (btnToggleAccordion && accordionBody) {
+            btnToggleAccordion.addEventListener("click", () => {
+                accordionBody.classList.toggle("collapsed");
+                if (accordionIcon) {
+                    accordionIcon.classList.toggle("rotate-180");
+                }
+            });
+        }
+
+        // Pestañas internas en panel de herramientas
+        const tabBtnSpelling = document.getElementById("tab-btn-spelling");
+        const tabBtnNorms = document.getElementById("tab-btn-norms");
+        const normPresetSelect = document.getElementById("norm-preset-select");
+        const btnApplyNorm = document.getElementById("btn-apply-norm");
+
+        tabBtnSpelling.addEventListener("click", () => switchRightTab("spelling"));
+        tabBtnNorms.addEventListener("click", () => switchRightTab("norms"));
+
+        normPresetSelect.addEventListener("change", (e) => {
+            syncNormFormWithPreset(e.target.value);
+        });
+
+        ["param-font", "param-size", "param-line-spacing", "param-align", "param-indent", "param-margin-top", "param-margin-bottom", "param-margin-left", "param-margin-right", "param-block-quotes"].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.addEventListener("change", () => {
+                    if (normPresetSelect.value === "none") {
+                        normPresetSelect.value = "custom";
+                        document.getElementById("custom-mode-tag").classList.remove("hidden");
+                    }
+                });
+            }
+        });
+
+        btnApplyNorm.addEventListener("click", async () => {
+            const presetVal = normPresetSelect.value;
+            if (presetVal === "none") {
+                AppState.appliedNorm = null;
+                AppState.diagnosticSummary = [];
+                renderAll();
+                showToast("Se mantiene el formato original del documento", "info");
+                return;
+            }
+
+            const config = readNormConfigFromForm();
+            applyAcademicNormToXml(config);
+            await runFullAnalysis();
+            renderAll();
+            showToast(`Norma "${config.name}" aplicada al documento`, "success");
+            if (window.innerWidth < 1024) {
+                setMobileSection("document");
+            }
+        });
+
+        // Manejo nativo de selección de archivo (compatible con Android Scoped Storage y WebViews)
+        fileInput.addEventListener("change", async (e) => {
+            const files = e.target.files;
+            if (files && files.length > 0) {
+                const selectedFile = files[0];
+                try {
+                    await processDocxFile(selectedFile, selectedFile.name);
+                } finally {
+                    fileInput.value = "";
+                }
+            }
+        });
+
+        // Drag & Drop visual en escritorio
+        ["dragenter", "dragover"].forEach(eventName => {
+            dropZone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropZone.classList.add("drop-active");
+            });
+        });
+
+        ["dragleave", "drop"].forEach(eventName => {
+            dropZone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropZone.classList.remove("drop-active");
+            });
+        });
+
+        dropZone.addEventListener("drop", async (e) => {
+            const files = e.dataTransfer?.files;
+            if (files && files.length > 0) {
+                const file = files[0];
+                await processDocxFile(file, file.name);
+            }
+        });
+
+        // Cargar archivo .docx de demostración
+        btnLoadSample.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            const sampleBlob = await generateSampleDocxBlob();
+            await processDocxFile(sampleBlob, "Tesis_Venezolana_Cap_I_III.docx");
+        });
+
+        // Volver a cargar otro documento
+        btnNewDoc.addEventListener("click", () => {
+            AppState.editingParaIndex = null;
+            AppState.activeIssueId = null;
+            fileInput.value = "";
+            switchView("upload");
+        });
+
+        // Corregir todo automáticamente
+        btnFixAllTop.addEventListener("click", applyAllFixes);
+        btnFixAllPanel.addEventListener("click", applyAllFixes);
+
+        // Descargar .docx corregido y normalizado
+        btnExportDocx.addEventListener("click", exportCorrectedDocx);
+
+        // Reanalizar
+        btnReanalyze.addEventListener("click", async () => {
+            showToast("Reanalizando el contenido del documento...", "info");
+            await runFullAnalysis();
+            renderAll();
+            showToast("Análisis actualizado", "success");
+        });
+
+        // Filtro de sugerencias
+        filterCategory.addEventListener("change", () => {
+            renderSuggestionsList();
+            lucide.createIcons();
+        });
+    });
+    </script>
+</body>
+</html>
